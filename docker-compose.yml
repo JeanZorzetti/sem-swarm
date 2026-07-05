@@ -1,0 +1,89 @@
+# ============================================================
+# SEM-Swarm — Docker Compose Stack
+# ============================================================
+# Deploys PostgreSQL (pgvector) + FastAPI Substrate API
+#
+# For LOCAL development: docker compose up -d
+# For VPS deployment:    docker compose --profile vps up -d
+# ============================================================
+
+services:
+  # ── PostgreSQL + pgvector ──────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: sem-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sem_swarm}
+      POSTGRES_USER: ${POSTGRES_USER:-sem_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sem_admin} -d ${POSTGRES_DB:-sem_swarm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sem-network
+
+  # ── FastAPI Substrate API ──────────────────────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: sem-api
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-sem_swarm}
+      POSTGRES_USER: ${POSTGRES_USER:-sem_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_LOG_LEVEL: ${API_LOG_LEVEL:-info}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-2048}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sem-network
+
+  # ── Ollama (VPS only) ──────────────────────────────────────
+  # Hosts embedding model (qwen3-embedding) and deep reasoning
+  # model (deepseek-r1:14b) for async/overnight processing.
+  # Only starts with: docker compose --profile vps up -d
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sem-ollama
+    restart: unless-stopped
+    profiles:
+      - vps
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+    networks:
+      - sem-network
+
+volumes:
+  pgdata:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  sem-network:
+    driver: bridge

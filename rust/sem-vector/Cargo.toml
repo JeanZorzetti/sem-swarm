@@ -1,0 +1,20 @@
+[package]
+name = "sem-vector"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance vector operations for SEM-Swarm epistemic memory"
+
+[lib]
+name = "sem_vector"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module"] }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"

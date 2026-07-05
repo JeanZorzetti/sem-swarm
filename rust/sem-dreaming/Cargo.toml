@@ -1,0 +1,24 @@
+[package]
+name = "sem-dreaming"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "SEM-Swarm Dreaming Loop: overnight epistemic memory consolidation"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+sem-vector = { path = "../sem-vector" }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono", "json"] }
+pgvector = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP client (to ping APIs if needed, or query Ollama)
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
