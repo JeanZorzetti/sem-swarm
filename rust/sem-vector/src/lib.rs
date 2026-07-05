@@ -18,7 +18,7 @@ mod python;
 
 pub use ops::{cosine_similarity, dot_product, l2_norm};
 pub use batch::{batch_cosine_against_one, pairwise_cosine_matrix};
-pub use dedup::{find_duplicates, find_contradictions, DuplicatePair, ContradictionPair};
+pub use dedup::{find_duplicates, find_contradictions, cluster_duplicates, DuplicatePair, ContradictionPair};
 
 use pyo3::prelude::*;
 

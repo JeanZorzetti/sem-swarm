@@ -2,7 +2,8 @@
 # This uses a multi-stage build to compile Rust into a tiny Debian image.
 
 # Stage 1: Build
-FROM rust:1.80 as builder
+# rust:1 = latest stable; the workspace uses edition 2024 (needs cargo >= 1.85)
+FROM rust:1 AS builder
 
 WORKDIR /usr/src/app
 
@@ -13,7 +14,8 @@ COPY . .
 
 # Build the dreaming loop binary for release
 # We build it statically if possible, but Debian bookworm-slim is fine for dynamic linking.
-RUN cargo build --release --package sem-dreaming
+# Build context is the repo root, so the workspace manifest lives in rust/.
+RUN cargo build --release --manifest-path rust/Cargo.toml --package sem-dreaming
 
 # Stage 2: Run
 FROM debian:bookworm-slim

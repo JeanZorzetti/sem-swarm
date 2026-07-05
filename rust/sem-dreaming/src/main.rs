@@ -60,8 +60,8 @@ async fn main() -> Result<()> {
     // 2. Fetch active facts
     info!("Fetching active epistemic facts...");
     let facts = sqlx::query_as::<_, EpistemicFact>(
-        "SELECT id, fact_text, embedding, confidence_score 
-         FROM epistemic_memory 
+        "SELECT id, fact_text, embedding::vector AS embedding, confidence_score
+         FROM epistemic_memory
          WHERE is_active = true AND superseded_by IS NULL"
     )
     .fetch_all(&pool)

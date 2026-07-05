@@ -17,7 +17,7 @@ sem-vector = { path = "../sem-vector" }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono", "json"] }
-pgvector = "0.4"
+pgvector = { version = "0.4", features = ["sqlx"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # HTTP client (to ping APIs if needed, or query Ollama)
