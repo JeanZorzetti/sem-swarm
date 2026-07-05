@@ -1,7 +1,7 @@
 # Dockerfile for SEM-Swarm API
 # This file is built to be deployed on Easypanel.
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
@@ -25,5 +25,6 @@ COPY . .
 # Expose FastAPI port
 EXPOSE 8000
 
-# Run the API via uvicorn
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the API via uvicorn (--app-dir puts api/ on sys.path so the flat
+# imports in api/main.py — `from config import settings` — resolve)
+CMD ["uvicorn", "main:app", "--app-dir", "api", "--host", "0.0.0.0", "--port", "8000"]
