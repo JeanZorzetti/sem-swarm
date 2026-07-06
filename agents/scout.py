@@ -391,6 +391,8 @@ class ScoutAgent:
                     "observations": observations,
                 }
 
+            await self.memory.heartbeat(self.agent_id, "scout")
+
             deposit_results = await self.deposit_to_memory(observations, raw_input)
             return {
                 "status": "deposited",

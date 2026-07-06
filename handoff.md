@@ -1,4 +1,15 @@
-# Handoff — Sprints 1 e 2 (2026-07-05)
+# Handoff — Sprints 1, 2 e 3 (2026-07-05)
+
+## Sprint 3 SHIPPED — Coordination + Benchmarks
+
+- **Presença de agentes (coordenação estigmérgica)**: `POST /swarm/heartbeat` grava `{agent_id, role, last_seen}` em `swarm_state.metadata.agents` (JSONB, sem migração); `active_agents_count` = vistos nos últimos 5 min; prune >24h. Scout/filter/synthesizer chamam via `MemoryClient.heartbeat()` (best-effort — falha nunca quebra o agente). UI ganhou card "Agentes" com lista viva.
+- **Filter daemon**: `python -m agents.filter --loop N` — poll contínuo a cada N segundos, sobrevive a falhas transitórias (loga e segue). Com o `FOR UPDATE SKIP LOCKED` do `/memory/pending`, múltiplos filters concorrentes já são seguros.
+- **Benchmark** (`python -m tests.benchmark_pipeline [--api-url] [--inputs N]`): mede latência por estágio, desfecho das observações e **fidelidade numérica** input→fato (a métrica do gap 5). Baseline 1º run (notebook i7-1255U, prod DB): scout 97s, filter 151s, fidelidade 1.0. Relatórios em `tests/benchmark-results/`.
+
+## OPS RESOLVIDO (2026-07-05, com Jean)
+- Volume `ollama` montado em `/root/.ollama` — modelos sobreviveram ao redeploy (validado).
+- `OLLAMA_MAX_LOADED_MODELS=1` no env — validado: após generate, `/api/ps` mostra só o 7B residente (o 8B foi descarregado antes; cenário de OOM eliminado).
+- Modelos re-pulled DENTRO do volume: `qwen3-embedding` + `qwen2.5:7b-instruct` (~9,4 GB).
 
 ## Sprint 2 SHIPPED (`cfc8713`) — Consensus + Self-Distillation
 

@@ -185,6 +185,13 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
 async def main():
     parser = argparse.ArgumentParser(description="SEM-Swarm Filter Agent")
     parser.add_argument("--limit", type=int, default=10, help="Max observations to process")
+    parser.add_argument(
+        "--loop",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="Daemon mode: poll continuously every N seconds (0 = run once)",
+    )
     args = parser.parse_args()
 
     # Configure logging
@@ -210,22 +217,33 @@ async def main():
         logger.error("❌ Memory API is unreachable. Start it with: docker compose up -d api")
         sys.exit(1)
 
-    # Poll pending observations
-    logger.info(f"📡 Buscando até {args.limit} observações pendentes...")
-    pending = await memory.get_pending(limit=args.limit)
+    agent_id = "filter-01"
 
-    if not pending:
-        logger.info("📭 Nenhuma observação pendente encontrada. Dormindo...")
-        return
+    while True:
+        try:
+            await memory.heartbeat(agent_id, "filter")
 
-    logger.info(f"📥 Encontradas {len(pending)} observações para julgar.")
+            logger.info(f"📡 Buscando até {args.limit} observações pendentes...")
+            pending = await memory.get_pending(limit=args.limit)
 
-    for obs in pending:
-        print("\n" + "="*60)
-        await process_observation(obs, ollama, extractor, memory, embedder)
-        print("="*60 + "\n")
+            if pending:
+                logger.info(f"📥 Encontradas {len(pending)} observações para julgar.")
+                for obs in pending:
+                    print("\n" + "="*60)
+                    await process_observation(obs, ollama, extractor, memory, embedder)
+                    print("="*60 + "\n")
+                logger.info("✅ Processamento finalizado.")
+            else:
+                logger.info("📭 Nenhuma observação pendente encontrada. Dormindo...")
+        except Exception as e:
+            # Daemon mode survives transient API/Ollama failures
+            if not args.loop:
+                raise
+            logger.error(f"❌ Erro no ciclo (seguindo em frente): {e}")
 
-    logger.info("✅ Processamento finalizado.")
+        if not args.loop:
+            return
+        await asyncio.sleep(args.loop)
 
 
 if __name__ == "__main__":

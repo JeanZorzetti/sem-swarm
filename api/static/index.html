@@ -66,6 +66,7 @@
   <div class="card"><div class="label">Observações</div><div class="value" id="c-obs">–</div><div class="hint" id="c-task"></div></div>
   <div class="card"><div class="label">Fatos verificados</div><div class="value" id="c-facts">–</div><div class="hint" id="c-active"></div></div>
   <div class="card"><div class="label">Dreaming loop</div><div class="value" id="c-dream" style="font-size:1.05rem;padding-top:.35rem">–</div><div class="hint">último tick (a cada ~3h)</div></div>
+  <div class="card"><div class="label">Agentes</div><div class="value" id="c-agents">–</div><div class="hint" id="c-agentlist"></div></div>
 </div>
 
 <div id="error" class="err" hidden></div>
@@ -115,6 +116,19 @@ async function load() {
     // stale if > 4h (loop ticks every 3h)
     const stale = !state.last_dreaming_loop_at || (Date.now() - new Date(state.last_dreaming_loop_at)) > 4 * 3600e3;
     dream.style.color = stale ? "var(--amber)" : "var(--green)";
+
+    const agents = Object.entries((state.metadata || {}).agents || {});
+    $("#c-agents").textContent = state.active_agents_count;
+    $("#c-agentlist").innerHTML = agents.length
+      ? agents
+          .sort((a, b) => new Date(b[1].last_seen) - new Date(a[1].last_seen))
+          .slice(0, 6)
+          .map(([id, a]) => {
+            const active = (Date.now() - new Date(a.last_seen)) < 5 * 60e3;
+            return `<span style="color:${active ? "var(--green)" : "var(--muted)"}">${esc(id)}</span> <span>(${esc(a.role)}, ${rel(a.last_seen)})</span>`;
+          })
+          .join("<br>")
+      : "nenhum agente visto ainda";
 
     $("#t-facts tbody").innerHTML = facts.length ? facts.map(f => {
       const m = f.metadata || {};

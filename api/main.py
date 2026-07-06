@@ -27,6 +27,7 @@ from models import (
     FactCorroborate,
     FactResponse,
     FactVerify,
+    HeartbeatRequest,
     ObservationCreate,
     ObservationPending,
     ObservationReject,
@@ -600,6 +601,66 @@ async def get_swarm_state(db: AsyncSession = Depends(get_db)):
         last_dreaming_loop_at=row.last_dreaming_loop_at,
         metadata=row.metadata if row.metadata else {},
     )
+
+
+# ── POST /swarm/heartbeat ─────────────────────────────────────
+
+ACTIVE_WINDOW_SECONDS = 300  # agent counts as active if seen in the last 5 min
+
+
+@app.post(
+    "/swarm/heartbeat",
+    tags=["swarm"],
+    summary="Register agent presence (stigmergic coordination)",
+)
+async def swarm_heartbeat(
+    payload: HeartbeatRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Agents announce themselves here on startup and periodically while working.
+    Presence lives in swarm_state.metadata (no schema migration needed);
+    active_agents_count reflects agents seen within the active window.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    result = await db.execute(
+        text("SELECT metadata FROM swarm_state WHERE id = 1 FOR UPDATE")
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=500, detail="Swarm state not initialized")
+
+    now = datetime.now(timezone.utc)
+    agents = (row.metadata or {}).get("agents", {})
+    agents[payload.agent_id] = {"role": payload.role, "last_seen": now.isoformat()}
+
+    # Prune agents not seen for 24h to keep the blob small
+    cutoff_prune = now - timedelta(hours=24)
+    agents = {
+        aid: info
+        for aid, info in agents.items()
+        if datetime.fromisoformat(info["last_seen"]) > cutoff_prune
+    }
+
+    cutoff_active = now - timedelta(seconds=ACTIVE_WINDOW_SECONDS)
+    active = sum(
+        1 for info in agents.values()
+        if datetime.fromisoformat(info["last_seen"]) > cutoff_active
+    )
+
+    metadata = dict(row.metadata or {})
+    metadata["agents"] = agents
+    await db.execute(
+        text("""
+            UPDATE swarm_state
+            SET metadata = CAST(:metadata AS jsonb), active_agents_count = :active
+            WHERE id = 1
+        """),
+        {"metadata": _jsonb_str(metadata), "active": active},
+    )
+
+    return {"status": "ok", "agent_id": payload.agent_id, "active_agents": active}
 
 
 # ── Helpers ───────────────────────────────────────────────────

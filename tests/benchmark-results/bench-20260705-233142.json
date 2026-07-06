@@ -1,0 +1,32 @@
+{
+  "ran_at": "2026-07-06T02:31:42.316504+00:00",
+  "api_url": "http://localhost:8010",
+  "inputs": 1,
+  "avg_scout_seconds": 97.4,
+  "avg_filter_seconds": 150.9,
+  "avg_numeric_fidelity": 1.0,
+  "results": [
+    {
+      "input": "O porcelanato retificado de 90x90 cm pesa cerca de 21 kg por caixa com 3 pecas.",
+      "scout_seconds": 97.4,
+      "filter_seconds": 150.9,
+      "observations": 2,
+      "outcomes": {
+        "verified": 2,
+        "rejected": 0,
+        "other": 0
+      },
+      "input_numbers": [
+        "21",
+        "3",
+        "90"
+      ],
+      "surviving_numbers": [
+        "21",
+        "3",
+        "90"
+      ],
+      "numeric_fidelity": 1.0
+    }
+  ]
+}

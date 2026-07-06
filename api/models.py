@@ -207,6 +207,13 @@ class SemanticSearchResponse(BaseModel):
 
 # ── Swarm State Schemas ──────────────────────────────────────
 
+class HeartbeatRequest(BaseModel):
+    """Agent presence signal — stigmergic coordination via shared state."""
+    agent_id: str = Field(..., min_length=1, max_length=64, examples=["scout-01"])
+    role: str = Field(..., min_length=1, max_length=32, examples=["scout", "filter", "synthesizer"])
+
+
+
 class SwarmStateResponse(BaseModel):
     """Current state of the swarm coordination."""
     current_task: str

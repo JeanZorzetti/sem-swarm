@@ -41,6 +41,25 @@ class MemoryClient:
         except Exception:
             return False
 
+    # ── Heartbeat (presence, best-effort) ─────────────────────
+
+    async def heartbeat(self, agent_id: str, role: str) -> dict[str, Any]:
+        """
+        Announce agent presence to the swarm. Best-effort: a failed
+        heartbeat never breaks the agent's actual work.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{self.api_url}/swarm/heartbeat",
+                    json={"agent_id": agent_id, "role": role},
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.warning(f"Heartbeat failed (ignored): {e}")
+            return {}
+
     # ── Observe (Scout → Memory) ──────────────────────────────
 
     async def observe(

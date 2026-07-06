@@ -63,6 +63,7 @@ class SynthesizerAgent:
 
     async def run(self, query: str):
         logger.info(f"🔍 Recebida a query: '{query}'")
+        await self.memory.heartbeat(self.agent_id, "synthesizer")
 
         # 1. Gerar o embedding da query (qwen3-embedding na VPS, 2048d via MRL)
         query_embedding = await self.embedder.embed(query)
