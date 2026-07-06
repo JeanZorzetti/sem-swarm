@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧠</text></svg>">
+<title>SEM-Swarm — Memória Epistêmica</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #11151f; --border: #1e2634;
+    --text: #d7dee8; --muted: #7a8699; --accent: #8b7cf6;
+    --green: #34d399; --amber: #fbbf24; --blue: #60a5fa; --red: #f87171;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2rem 1.25rem 4rem; max-width: 1100px; margin: 0 auto;
+  }
+  header { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.75rem; }
+  h1 { font-size: 1.35rem; font-weight: 650; letter-spacing: -.01em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: .85rem; }
+  #health { width: .6rem; height: .6rem; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: .35rem; }
+  #health.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  #health.bad { background: var(--red); }
+  #refreshed { margin-left: auto; color: var(--muted); font-size: .8rem; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .9rem; margin-bottom: 2rem; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.15rem; }
+  .card .label { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; margin-bottom: .3rem; }
+  .card .value { font-size: 1.7rem; font-weight: 650; font-family: var(--mono); }
+  .card .hint { color: var(--muted); font-size: .78rem; margin-top: .2rem; }
+
+  h2 { font-size: .95rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; margin: 2rem 0 .75rem; }
+  .tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; padding: .6rem .9rem; border-bottom: 1px solid var(--border); }
+  td { padding: .55rem .9rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.id { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+  td.when { color: var(--muted); white-space: nowrap; font-size: .8rem; }
+  .badge { display: inline-block; padding: .1rem .55rem; border-radius: 99px; font-size: .72rem; font-weight: 600; letter-spacing: .03em; }
+  .b-verified { background: #0c2b21; color: var(--green); }
+  .b-pending { background: #2e2408; color: var(--amber); }
+  .b-processing { background: #12263f; color: var(--blue); }
+  .b-rejected { background: #2d1416; color: var(--red); }
+  .b-off { background: #1b2130; color: var(--muted); }
+  .conf { display: inline-flex; align-items: center; gap: .45rem; font-family: var(--mono); font-size: .8rem; }
+  .confbar { width: 52px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .confbar i { display: block; height: 100%; background: var(--accent); }
+  .empty { color: var(--muted); padding: 1rem; text-align: center; font-size: .85rem; }
+  .err { color: var(--red); font-size: .85rem; margin: 1rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 SEM-<span>Swarm</span></h1>
+  <div class="sub"><span id="health"></span>Memória Epistêmica — inspetor read-only</div>
+  <div id="refreshed"></div>
+</header>
+
+<div class="cards">
+  <div class="card"><div class="label">Observações</div><div class="value" id="c-obs">–</div><div class="hint" id="c-task"></div></div>
+  <div class="card"><div class="label">Fatos verificados</div><div class="value" id="c-facts">–</div><div class="hint" id="c-active"></div></div>
+  <div class="card"><div class="label">Dreaming loop</div><div class="value" id="c-dream" style="font-size:1.05rem;padding-top:.35rem">–</div><div class="hint">último tick (a cada ~3h)</div></div>
+</div>
+
+<div id="error" class="err" hidden></div>
+
+<h2>Fatos na memória</h2>
+<div class="tablewrap"><table id="t-facts">
+  <thead><tr><th>#</th><th>Fato</th><th>Confiança</th><th>Estado</th><th>Criado</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+
+<h2>Observações recentes</h2>
+<div class="tablewrap"><table id="t-obs">
+  <thead><tr><th>#</th><th>Agente</th><th>Conteúdo</th><th>Status</th><th>Criado</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const fmt = (d) => d ? new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
+
+function rel(d) {
+  if (!d) return "nunca";
+  const m = Math.round((Date.now() - new Date(d)) / 60000);
+  if (m < 1) return "agora";
+  if (m < 60) return `há ${m} min`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `há ${h}h${String(m % 60).padStart(2, "0")}` : `há ${Math.floor(h / 24)} dias`;
+}
+
+const OBS_BADGE = { verified: "b-verified", pending: "b-pending", processing: "b-processing", rejected: "b-rejected" };
+
+async function load() {
+  try {
+    const [state, facts, obs] = await Promise.all([
+      fetch("/swarm/state").then(r => r.json()),
+      fetch("/memory/facts?limit=100").then(r => r.json()),
+      fetch("/memory/observations?limit=100").then(r => r.json()),
+    ]);
+
+    $("#health").className = "ok";
+    $("#c-obs").textContent = state.total_observations;
+    $("#c-task").textContent = state.current_task ? `tarefa: ${state.current_task}` : "";
+    $("#c-facts").textContent = state.total_verified_facts;
+    $("#c-active").textContent = `${facts.filter(f => f.is_active).length} ativos na listagem`;
+    const dream = $("#c-dream");
+    dream.textContent = rel(state.last_dreaming_loop_at);
+    // stale if > 4h (loop ticks every 3h)
+    const stale = !state.last_dreaming_loop_at || (Date.now() - new Date(state.last_dreaming_loop_at)) > 4 * 3600e3;
+    dream.style.color = stale ? "var(--amber)" : "var(--green)";
+
+    $("#t-facts tbody").innerHTML = facts.length ? facts.map(f => `
+      <tr>
+        <td class="id">${f.id}</td>
+        <td>${esc(f.fact_text)}</td>
+        <td><span class="conf"><span class="confbar"><i style="width:${Math.round(f.confidence_score * 100)}%"></i></span>${f.confidence_score.toFixed(2)}</span></td>
+        <td>${f.is_active ? '<span class="badge b-verified">ativo</span>' : `<span class="badge b-off">consolidado → #${f.superseded_by ?? "?"}</span>`}</td>
+        <td class="when">${fmt(f.created_at)}</td>
+      </tr>`).join("") : `<tr><td colspan="5" class="empty">Nenhum fato ainda.</td></tr>`;
+
+    $("#t-obs tbody").innerHTML = obs.length ? obs.map(o => `
+      <tr>
+        <td class="id">${o.id}</td>
+        <td class="id">${esc(o.source_agent)}</td>
+        <td title="${esc(o.raw_content)}">${esc(o.raw_content.length > 140 ? o.raw_content.slice(0, 140) + "…" : o.raw_content)}</td>
+        <td><span class="badge ${OBS_BADGE[o.status] || "b-off"}">${o.status}</span></td>
+        <td class="when">${fmt(o.created_at)}</td>
+      </tr>`).join("") : `<tr><td colspan="5" class="empty">Nenhuma observação ainda.</td></tr>`;
+
+    $("#error").hidden = true;
+    $("#refreshed").textContent = `atualizado ${new Date().toLocaleTimeString("pt-BR")} · auto 30s`;
+  } catch (e) {
+    $("#health").className = "bad";
+    $("#error").hidden = false;
+    $("#error").textContent = `Falha ao carregar: ${e}`;
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

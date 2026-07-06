@@ -76,6 +76,16 @@ app = FastAPI(
 )
 
 
+# ── UI (read-only memory inspector) ──────────────────────────
+
+@app.get("/", include_in_schema=False)
+async def ui_index():
+    """Serve the single-file read-only memory inspector."""
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
 # ── Health Check ─────────────────────────────────────────────
 
 @app.get("/health", tags=["system"])
@@ -397,6 +407,83 @@ async def semantic_search(
         results_count=len(results),
         results=results,
     )
+
+
+# ── GET /memory/facts (read-only, UI inspector) ──────────────
+
+@app.get(
+    "/memory/facts",
+    tags=["memory"],
+    summary="List recent facts (read-only)",
+)
+async def list_facts(
+    limit: int = Query(default=50, ge=1, le=200),
+    include_inactive: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read-only listing of recent facts for inspection. No side effects."""
+    where = "" if include_inactive else "WHERE is_active = TRUE"
+    result = await db.execute(
+        text(f"""
+            SELECT id, created_at, fact_text, confidence_score, is_active,
+                   superseded_by, source_observation_id, metadata
+            FROM epistemic_memory
+            {where}
+            ORDER BY id DESC
+            LIMIT :limit
+        """),
+        {"limit": limit},
+    )
+    return [
+        {
+            "id": r.id,
+            "created_at": r.created_at,
+            "fact_text": r.fact_text,
+            "confidence_score": r.confidence_score,
+            "is_active": r.is_active,
+            "superseded_by": r.superseded_by,
+            "source_observation_id": r.source_observation_id,
+            "metadata": r.metadata or {},
+        }
+        for r in result.fetchall()
+    ]
+
+
+# ── GET /memory/observations (read-only, UI inspector) ───────
+
+@app.get(
+    "/memory/observations",
+    tags=["memory"],
+    summary="List recent observations with status (read-only)",
+)
+async def list_observations(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Read-only listing of recent observations for inspection.
+    Unlike /memory/pending, this does NOT mark anything as 'processing'.
+    """
+    result = await db.execute(
+        text("""
+            SELECT id, created_at, source_agent, raw_content, status, metadata
+            FROM env_observations
+            ORDER BY id DESC
+            LIMIT :limit
+        """),
+        {"limit": limit},
+    )
+    return [
+        {
+            "id": r.id,
+            "created_at": r.created_at,
+            "source_agent": r.source_agent,
+            "raw_content": r.raw_content,
+            "status": r.status,
+            "metadata": r.metadata or {},
+        }
+        for r in result.fetchall()
+    ]
 
 
 # ── GET /swarm/state ──────────────────────────────────────────
