@@ -1,4 +1,22 @@
-# Handoff — E2E Sprint 1 + fechamento de gaps (2026-07-05)
+# Handoff — Sprints 1 e 2 (2026-07-05)
+
+## Sprint 2 SHIPPED (`cfc8713`) — Consensus + Self-Distillation
+
+### Consensus (corroboração)
+- `POST /memory/corroborate`: observação quase-idêntica a um fato existente (sim ≥0.95) deixa de virar lixo — reforça o fato (contador `corroborations`, confiança fecha metade da incerteza restante ponderada pela evidência), marca a obs `verified` com `corroborated_fact_id` e grava `swarm_state.last_consensus_at`.
+- Filter: o branch de dedup agora corrobora em vez de rejeitar. Validado em prod: obs #6 → fato #1 (sim 0.9793, corroborations=1).
+- Gotcha asyncpg: `to_jsonb(:param)` precisa de `CAST` explícito (`to_jsonb(CAST(:x AS bigint))`), senão `DatatypeMismatchError` — mesmo padrão do `/memory/reject`.
+
+### Self-Distillation (dreaming loop)
+- Pares de contradição do `sem-vector` (banda 0.70–0.95) agora são **julgados pelo LLM da VPS** (CONTRADITORIOS/COMPATIVEIS); perdedor é superseded com `metadata.resolution='contradiction_resolved'`. Vence quem tem mais corroborações; empate → mais recente (regra do doc-fonte). Cap de 10 julgamentos/tick.
+- Fato consolidado agora recebe **embedding real do texto unificado** (MRL 2048) em vez de centroide.
+- **E2E em prod (demonstração completa)**: fato falso semeado ("porcelanato absorve >8%") → dreaming julgou: vs #2 (0×0 corroborações, empate) → recência venceu, #2 superseded; vs #1 (**1 corroboração**) → **#1 venceu e expurgou o fato falso**. O consenso derrotou a desinformação. Bônus: o filter (phi4-mini) tinha REJEITADO sozinho a observação falsa — o fato falso só entrou porque foi semeado direto via API.
+- ⚠️ Artefato de ordenação observado: um perdedor julgado cedo no tick pode arrastar um fato verdadeiro (#2 caiu pro #5 antes do #5 cair pro #1; cadeia #2→#5→#1). Mitigação candidata pro Sprint 3: ordenar julgamentos por corroborações/recência ou passe duplo.
+
+### 🔴 Achados de OPS (ação sua no EasyPanel, serviço ollama)
+1. **SEM volume persistente**: o OOM recriou o container e **apagou os dois modelos** (re-pull de ~9,4 GB foi feito via API pra restaurar). Montar volume em `/root/.ollama`.
+2. **OOM real**: embedding 8B + qwen2.5 7B carregados juntos estouram a RAM do serviço → setar `OLLAMA_MAX_LOADED_MODELS=1` no env.
+3. O container recriado veio com Ollama 0.31.1 (era 0.30.2) — imagem `:latest` sem pin.
 
 ## Rodada 3 — Gap 3 FECHADO: embeddings reais (qwen3-embedding, 2048d via MRL)
 - `EmbeddingGenerator` ganhou `dimensions` (truncamento MRL no `/api/embed`); `filter.py` e `synthesizer.py` trocaram o mock pelo embed real na VPS (`OLLAMA_VPS_URL`). Falha de embedding deixa a observação **pendente** (retry), nunca insere ruído.

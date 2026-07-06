@@ -138,7 +138,7 @@ python tests/test_scout_local.py
 - [x] Sprint 0 — Bootstrap (Scout + API + Banco)
 - [x] Sprint 0.5 — Revisão arquitetural (paper-driven: Phi-4-Mini + NuExtract)
 - [x] Sprint 1 — Filter + Synthesizer + Dreaming Loop (E2E remoto validado; embeddings reais qwen3-embedding 2048d via MRL)
-- [ ] Sprint 2 — Self-Distillation + Consensus
+- [x] Sprint 2 — Self-Distillation + Consensus (corroboração reforça fatos; dreaming julga e resolve contradições via LLM — mais corroborado vence, empate → mais recente)
 - [ ] Sprint 3 — Multi-agent coordination + Benchmarks
 
 ---
