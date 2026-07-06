@@ -92,16 +92,42 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
         max_retries=2,
     )
 
-    # Extração TOTALMENTE vazia = flub do NuExtract, não um veredito.
-    # Rejeição legítima sempre traz reasoning; aqui a obs deve continuar
-    # 'processing' para ser rejulgada via --reprocess-stuck (nunca virar
-    # rejeição com motivo em branco — perderíamos um fato verdadeiro).
-    if (
-        not extracted_json.get("is_valid")
-        and not str(extracted_json.get("reasoning_summary", "")).strip()
-        and not str(extracted_json.get("clean_fact", "")).strip()
-    ):
-        raise RuntimeError("extração inconclusiva: NuExtract devolveu campos vazios")
+    def _inconclusive(data: dict) -> bool:
+        # Rejeição legítima sempre traz reasoning; tudo vazio = flub do
+        # extrator, não um veredito (perderíamos um fato verdadeiro).
+        return (
+            not data.get("is_valid")
+            and not str(data.get("reasoning_summary", "")).strip()
+            and not str(data.get("clean_fact", "")).strip()
+        )
+
+    if _inconclusive(extracted_json):
+        # NuExtract determinístico flubba SEMPRE no mesmo input (~1/3 das
+        # obs de catálogo) — retry não resolve. Fallback: decisão via JSON
+        # estruturado do modelo de raciocínio (mesmo padrão do Scout).
+        logger.warning(
+            f"⚠️ NuExtract inconclusivo p/ obs #{obs_id} — fallback JSON via {REASONING_MODEL}"
+        )
+        extracted_json = await ollama.generate_structured(
+            model=REASONING_MODEL,
+            prompt=(
+                "Extraia a decisão final do julgamento abaixo.\n\n"
+                f"{extraction_text}"
+            ),
+            json_schema={
+                "type": "object",
+                "properties": {
+                    "is_valid": {"type": "boolean"},
+                    "reasoning_summary": {"type": "string"},
+                    "clean_fact": {"type": "string"},
+                    "confidence_score": {"type": "number"},
+                },
+                "required": ["is_valid", "reasoning_summary", "clean_fact", "confidence_score"],
+            },
+            temperature=0.1,
+        )
+        if _inconclusive(extracted_json):
+            raise RuntimeError("extração inconclusiva mesmo após fallback estruturado")
 
     try:
         # extracted_json is already a dict, NuExtractClient.extract() returns a dict
