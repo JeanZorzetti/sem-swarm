@@ -218,16 +218,28 @@ async def main() -> None:
 
     if args.files:
         scout = ScoutAgent(agent_id="scout-roilabs", api_url=args.api_url)
+        # SLM em CPU sob concorrência (ex.: filter rodando junto) estoura os
+        # 120s default — a fila do Ollama serializa os generates.
+        scout.ollama.timeout = 480.0
+        scout.extractor.timeout = 300.0
         for path in args.files:
             text = file_to_text(path)
             chunks = chunk_text(text)
             logger.info(f"📄 {path.name}: {len(text)} chars → {len(chunks)} chunk(s) via Scout")
             for i, chunk in enumerate(chunks, 1):
                 logger.info(f"   chunk {i}/{len(chunks)}...")
-                result = await scout.run(chunk, offline=False)
-                n = result.get("observation_count", 0)
-                total += n
-                logger.info(f"   → {n} observações ({result['status']})")
+                for attempt in (1, 2):
+                    try:
+                        result = await scout.run(chunk, offline=False)
+                        n = result.get("observation_count", 0)
+                        total += n
+                        logger.info(f"   → {n} observações ({result['status']})")
+                        break
+                    except Exception as e:
+                        if attempt == 1:
+                            logger.warning(f"   ⚠️ chunk {i} falhou ({e}); retry...")
+                        else:
+                            logger.error(f"   ❌ chunk {i} falhou de novo, pulando: {e}")
 
     logger.info(f"✅ Ingestão concluída: {total} observações depositadas em {args.api_url}")
     logger.info("   Próximo passo: python -m agents.filter --loop 60  (promove a fatos)")

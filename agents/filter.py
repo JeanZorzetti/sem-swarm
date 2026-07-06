@@ -19,6 +19,8 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
+
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -182,6 +184,32 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
         )
 
 
+async def reprocess_stuck(memory: MemoryClient, ollama, extractor, embedder, limit: int):
+    """
+    Recover observations stranded in 'processing' (a filter crash mid-batch
+    leaves them there; /memory/pending never returns them again).
+    /memory/verify and /memory/reject accept status='processing', so we can
+    judge them directly from the read-only listing.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{memory.api_url}/memory/observations", params={"limit": 200}
+        )
+        resp.raise_for_status()
+        stuck = [o for o in resp.json() if o["status"] == "processing"][:limit]
+
+    if not stuck:
+        logger.info("📭 Nenhuma observação presa em 'processing'.")
+        return
+
+    logger.info(f"♻️ Reprocessando {len(stuck)} observações presas em 'processing'...")
+    for obs in stuck:
+        try:
+            await process_observation(obs, ollama, extractor, memory, embedder)
+        except Exception as e:
+            logger.error(f"❌ Falha na observação #{obs['id']} (seguindo): {e}")
+
+
 async def main():
     parser = argparse.ArgumentParser(description="SEM-Swarm Filter Agent")
     parser.add_argument("--limit", type=int, default=10, help="Max observations to process")
@@ -191,6 +219,11 @@ async def main():
         default=0,
         metavar="SECONDS",
         help="Daemon mode: poll continuously every N seconds (0 = run once)",
+    )
+    parser.add_argument(
+        "--reprocess-stuck",
+        action="store_true",
+        help="Recover observations stranded in 'processing' before normal polling",
     )
     args = parser.parse_args()
 
@@ -219,6 +252,12 @@ async def main():
 
     agent_id = "filter-01"
 
+    if args.reprocess_stuck:
+        await memory.heartbeat(agent_id, "filter")
+        await reprocess_stuck(memory, ollama, extractor, embedder, args.limit)
+        if not args.loop:
+            return
+
     while True:
         try:
             await memory.heartbeat(agent_id, "filter")
@@ -230,7 +269,14 @@ async def main():
                 logger.info(f"📥 Encontradas {len(pending)} observações para julgar.")
                 for obs in pending:
                     print("\n" + "="*60)
-                    await process_observation(obs, ollama, extractor, memory, embedder)
+                    try:
+                        await process_observation(obs, ollama, extractor, memory, embedder)
+                    except Exception as e:
+                        # One bad observation must not strand the rest of the
+                        # fetched batch (they are already marked 'processing').
+                        # The failed obs stays 'processing'; recover later with
+                        # --reprocess-stuck.
+                        logger.error(f"❌ Falha na observação #{obs['id']} (seguindo o lote): {e}")
                     print("="*60 + "\n")
                 logger.info("✅ Processamento finalizado.")
             else:
