@@ -36,11 +36,15 @@ class EmbeddingGenerator:
         local_url: str = DEFAULT_LOCAL_URL,
         vps_url: str | None = None,
         fallback_model: str = FALLBACK_LOCAL_MODEL,
+        dimensions: int | None = None,
     ):
         self.model = model
         self.local_url = local_url.rstrip("/")
         self.vps_url = vps_url.rstrip("/") if vps_url else None
         self.fallback_model = fallback_model
+        # MRL truncation: qwen3-embedding outputs 4096 dims by default, but the
+        # DB column is halfvec(2048) (HNSW on halfvec caps at ~4000 dims).
+        self.dimensions = dimensions
 
     def _get_endpoint_and_model(self) -> tuple[str, str]:
         """
@@ -53,11 +57,14 @@ class EmbeddingGenerator:
 
     async def _try_embed(self, url: str, model: str, text: str) -> list[float] | None:
         """Attempt to generate an embedding from a specific endpoint."""
+        payload: dict[str, Any] = {"model": model, "input": text}
+        if self.dimensions:
+            payload["dimensions"] = self.dimensions
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
                     f"{url}/api/embed",
-                    json={"model": model, "input": text},
+                    json=payload,
                 )
                 resp.raise_for_status()
                 data = resp.json()

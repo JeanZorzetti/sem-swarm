@@ -15,7 +15,7 @@ import argparse
 import asyncio
 import json
 import logging
-import random
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "core"))
 from core.ollama_client import OllamaClient
 from core.extractor import NuExtractClient
 from core.memory_client import MemoryClient
+from core.embeddings import EmbeddingGenerator
 from core.vector_ops import batch_cosine
 
 logger = logging.getLogger("sem-swarm.filter")
@@ -35,18 +36,7 @@ logger = logging.getLogger("sem-swarm.filter")
 
 # O modelo roteador/avaliador local
 REASONING_MODEL = "phi4-mini:latest"
-EMBEDDING_DIM = 2048
-
-
-import hashlib
-
-def get_mock_embedding(text: str, dim: int = EMBEDDING_DIM) -> list[float]:
-    """Generates a deterministic mock embedding for testing based on the text."""
-    # Seed the random number generator with the text hash so it's deterministic
-    h = hashlib.sha256(text.encode('utf-8')).digest()
-    seed = int.from_bytes(h[:4], 'little')
-    rng = random.Random(seed)
-    return [rng.uniform(-1.0, 1.0) for _ in range(dim)]
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "2048"))
 
 
 async def process_observation(
@@ -54,6 +44,7 @@ async def process_observation(
     ollama: OllamaClient,
     extractor: NuExtractClient,
     memory: MemoryClient,
+    embedder: EmbeddingGenerator,
 ):
     """
     Avalia uma observação bruta e decide se a aprova ou rejeita.
@@ -124,8 +115,12 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
         logger.info(f"🌟 Observação #{obs_id} APROVADA! (confiança: {confidence})")
         logger.info(f"   Fato: {fact}")
         
-        # Gerar mock embedding (até termos a VPS com qwen3-embedding)
-        embedding = get_mock_embedding(fact)
+        # Embedding real (qwen3-embedding na VPS, truncado a 2048 via MRL)
+        try:
+            embedding = await embedder.embed(fact)
+        except ConnectionError as e:
+            logger.error(f"❌ Embedding indisponível ({e}). Observação #{obs_id} fica pendente para retry.")
+            return
 
         # Deduplicação Exata local via Rust (sem-vector)
         logger.info("🔍 Buscando top candidatos no banco para deduplicação exata...")
@@ -200,6 +195,11 @@ async def main():
     ollama = OllamaClient()
     extractor = NuExtractClient()
     memory = MemoryClient()
+    embedder = EmbeddingGenerator(
+        model=os.getenv("OLLAMA_EMBED_MODEL", "qwen3-embedding"),
+        vps_url=os.getenv("OLLAMA_VPS_URL"),
+        dimensions=EMBEDDING_DIM,
+    )
 
     # Check dependencies
     if not await memory.is_healthy():
@@ -218,7 +218,7 @@ async def main():
 
     for obs in pending:
         print("\n" + "="*60)
-        await process_observation(obs, ollama, extractor, memory)
+        await process_observation(obs, ollama, extractor, memory, embedder)
         print("="*60 + "\n")
 
     logger.info("✅ Processamento finalizado.")

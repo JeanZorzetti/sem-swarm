@@ -30,26 +30,18 @@ Pipeline (Sprint 1):
 
 import argparse
 import asyncio
-import hashlib
-import random
 import os
 import logging
 
 from core.ollama_client import OllamaClient
 from core.memory_client import MemoryClient
+from core.embeddings import EmbeddingGenerator
 
 logger = logging.getLogger("sem-swarm.synthesizer")
 
 # Use qwen3:8b as default, but fallback to phi4-mini for local tests if qwen3 is not present.
 REASONING_MODEL = os.getenv("OLLAMA_REASONING_MODEL", "phi4-mini")
-EMBEDDING_DIM = 2048
-
-def get_mock_embedding(text: str, dim: int = EMBEDDING_DIM) -> list[float]:
-    """Generates a deterministic mock embedding for testing based on the text."""
-    h = hashlib.sha256(text.encode('utf-8')).digest()
-    seed = int.from_bytes(h[:4], 'little')
-    rng = random.Random(seed)
-    return [rng.uniform(-1.0, 1.0) for _ in range(dim)]
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "2048"))
 
 
 class SynthesizerAgent:
@@ -62,13 +54,18 @@ class SynthesizerAgent:
         self.agent_id = agent_id
         self.ollama = OllamaClient()
         self.memory = MemoryClient()
+        self.embedder = EmbeddingGenerator(
+            model=os.getenv("OLLAMA_EMBED_MODEL", "qwen3-embedding"),
+            vps_url=os.getenv("OLLAMA_VPS_URL"),
+            dimensions=EMBEDDING_DIM,
+        )
         logger.info(f"SynthesizerAgent '{agent_id}' initialized with model {REASONING_MODEL}")
 
     async def run(self, query: str):
         logger.info(f"🔍 Recebida a query: '{query}'")
-        
-        # 1. Gerar o embedding da query
-        query_embedding = get_mock_embedding(query)
+
+        # 1. Gerar o embedding da query (qwen3-embedding na VPS, 2048d via MRL)
+        query_embedding = await self.embedder.embed(query)
         
         # 2. Consultar o banco via MemoryClient
         logger.info("🔎 Buscando fatos relevantes na Epistemic Memory...")
