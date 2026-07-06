@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import engine, get_db
 from models import (
+    FactCorroborate,
     FactResponse,
     FactVerify,
     ObservationCreate,
@@ -325,6 +326,94 @@ async def reject_observation(
     logger.info(f"🗑️ Observation #{payload.observation_id} rejected. Reason: {payload.reason}")
     return {"status": "rejected", "observation_id": payload.observation_id}
 
+
+
+# ── POST /memory/corroborate (consensus) ─────────────────────
+
+@app.post(
+    "/memory/corroborate",
+    status_code=200,
+    tags=["memory"],
+    summary="Corroborate an existing fact with new evidence (consensus)",
+)
+async def corroborate_fact(
+    payload: FactCorroborate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Consensus mechanism: a Filter agent found a new observation that matches
+    an existing fact (similarity >= dedup threshold). Instead of discarding
+    the signal, the swarm reinforces the fact: corroboration counter goes up,
+    confidence is reinforced, and swarm-wide last_consensus_at is stamped.
+    """
+    fact_result = await db.execute(
+        text("SELECT id, confidence_score, is_active FROM epistemic_memory WHERE id = :id FOR UPDATE"),
+        {"id": payload.fact_id},
+    )
+    fact = fact_result.fetchone()
+    if not fact:
+        raise HTTPException(status_code=404, detail=f"Fact #{payload.fact_id} not found")
+    if not fact.is_active:
+        raise HTTPException(status_code=409, detail=f"Fact #{payload.fact_id} is no longer active")
+
+    obs_result = await db.execute(
+        text("SELECT id, status FROM env_observations WHERE id = :id"),
+        {"id": payload.observation_id},
+    )
+    obs = obs_result.fetchone()
+    if not obs:
+        raise HTTPException(status_code=404, detail=f"Observation #{payload.observation_id} not found")
+    if obs.status not in ("processing", "pending"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Observation #{payload.observation_id} has status '{obs.status}'",
+        )
+
+    # Reinforce: each corroboration closes half the remaining uncertainty,
+    # weighted by the evidence confidence. Bounded by 1.0 by construction.
+    result = await db.execute(
+        text("""
+            UPDATE epistemic_memory
+            SET confidence_score = confidence_score + (1.0 - confidence_score) * :evidence * 0.5,
+                metadata = jsonb_set(
+                    metadata,
+                    '{corroborations}',
+                    to_jsonb(COALESCE((metadata->>'corroborations')::int, 0) + 1)
+                )
+            WHERE id = :fact_id
+            RETURNING confidence_score, (metadata->>'corroborations')::int AS corroborations
+        """),
+        {"evidence": payload.confidence_score, "fact_id": payload.fact_id},
+    )
+    updated = result.fetchone()
+
+    await db.execute(
+        text("""
+            UPDATE env_observations
+            SET status = 'verified',
+                metadata = jsonb_set(metadata, '{corroborated_fact_id}', to_jsonb(CAST(:fact_id AS bigint)))
+            WHERE id = :obs_id
+        """),
+        {"fact_id": payload.fact_id, "obs_id": payload.observation_id},
+    )
+
+    await db.execute(
+        text("UPDATE swarm_state SET last_consensus_at = NOW() WHERE id = 1")
+    )
+
+    logger.info(
+        f"🤝 Consensus: observation #{payload.observation_id} corroborates fact "
+        f"#{payload.fact_id} (sim {payload.similarity:.4f}, "
+        f"corroborations={updated.corroborations}, confidence={updated.confidence_score:.3f})"
+    )
+
+    return {
+        "status": "corroborated",
+        "fact_id": payload.fact_id,
+        "observation_id": payload.observation_id,
+        "corroborations": updated.corroborations,
+        "confidence_score": updated.confidence_score,
+    }
 
 
 # ── POST /memory/search ──────────────────────────────────────

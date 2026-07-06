@@ -31,6 +31,9 @@ struct EpistemicFact {
     #[sqlx(try_from = "pgvector::Vector")]
     embedding: pgvector::Vector,
     confidence_score: f64,
+    created_at: DateTime<Utc>,
+    // Consensus signal: how many independent observations corroborated this fact.
+    corroborations: i32,
 }
 
 #[tokio::main]
@@ -67,7 +70,8 @@ async fn main() -> Result<()> {
     // 2. Fetch active facts
     info!("Fetching active epistemic facts...");
     let facts = sqlx::query_as::<_, EpistemicFact>(
-        "SELECT id, fact_text, embedding::vector AS embedding, confidence_score
+        "SELECT id, fact_text, embedding::vector AS embedding, confidence_score, created_at,
+                COALESCE((metadata->>'corroborations')::int, 0) AS corroborations
          FROM epistemic_memory
          WHERE is_active = true AND superseded_by IS NULL"
     )
@@ -117,6 +121,75 @@ struct OllamaResponse {
     response: String,
 }
 
+#[derive(Serialize)]
+struct EmbedRequest {
+    model: String,
+    input: String,
+    // MRL truncation: DB column is halfvec(2048); qwen3-embedding defaults to 4096.
+    dimensions: usize,
+}
+
+#[derive(Deserialize)]
+struct EmbedResponse {
+    embeddings: Vec<Vec<f32>>,
+}
+
+async fn embed_text(
+    client: &reqwest::Client,
+    ollama_url: &str,
+    model: &str,
+    dimensions: usize,
+    text: &str,
+) -> Result<Vec<f32>> {
+    let req = EmbedRequest {
+        model: model.to_string(),
+        input: text.to_string(),
+        dimensions,
+    };
+    let res = client
+        .post(format!("{}/api/embed", ollama_url))
+        .json(&req)
+        .send()
+        .await?
+        .json::<EmbedResponse>()
+        .await?;
+    res.embeddings
+        .into_iter()
+        .next()
+        .filter(|v| v.len() == dimensions)
+        .ok_or_else(|| anyhow::anyhow!("embed returned wrong shape"))
+}
+
+async fn judge_contradiction(
+    client: &reqwest::Client,
+    ollama_url: &str,
+    model: &str,
+    fact_a: &str,
+    fact_b: &str,
+) -> Result<bool> {
+    let prompt = format!(
+        "Você é o processo de consolidação de memória do SEM-Swarm (Dreaming Loop).\n\
+         Analise os dois fatos abaixo e responda APENAS com uma palavra:\n\
+         CONTRADITORIOS — se eles não podem ser ambos verdadeiros ao mesmo tempo;\n\
+         COMPATIVEIS — caso contrário.\n\n\
+         Fato A: {}\nFato B: {}\n\n[VEREDITO]:",
+        fact_a, fact_b
+    );
+    let req = OllamaRequest {
+        model: model.to_string(),
+        prompt,
+        stream: false,
+    };
+    let res = client
+        .post(format!("{}/api/generate", ollama_url))
+        .json(&req)
+        .send()
+        .await?
+        .json::<OllamaResponse>()
+        .await?;
+    Ok(res.response.to_uppercase().contains("CONTRADIT"))
+}
+
 async fn consolidate_cluster(client: &reqwest::Client, ollama_url: &str, model: &str, texts: &[&str]) -> Result<String> {
     let mut prompt = String::from("Você é o processo de consolidação de memória do SEM-Swarm (Dreaming Loop).\nSua tarefa é fundir os seguintes fatos verificados redundantes em uma única frase coesa e clara, sem perda de informações importantes. Apenas responda com a frase consolidada, sem introduções.\n\n");
     for (i, t) in texts.iter().enumerate() {
@@ -146,6 +219,11 @@ async fn consolidate_cluster(client: &reqwest::Client, ollama_url: &str, model: 
     let ollama_url = env::var("OLLAMA_VPS_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
     // Fallback to phi4-mini for local testing if deepseek is not available
     let deepseek_model = env::var("OLLAMA_DEEP_REASONING_MODEL").unwrap_or_else(|_| "phi4-mini".to_string());
+    let embed_model = env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| "qwen3-embedding".to_string());
+    let embed_dim: usize = env::var("EMBEDDING_DIM")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2048);
 
     info!("Contacting Ollama at {} with model {} for consolidation...", ollama_url, deepseek_model);
 
@@ -158,34 +236,15 @@ async fn consolidate_cluster(client: &reqwest::Client, ollama_url: &str, model: 
         match consolidate_cluster(&client, &ollama_url, &deepseek_model, &texts).await {
             Ok(unified_text) => {
                 info!("  -> Consolidated fact: {}", unified_text);
-                
-                // 1. Calculate centroid embedding
-                let dim = embeddings[0].len();
-                let mut centroid = vec![0.0f32; dim];
-                for &idx in cluster {
-                    for d in 0..dim {
-                        centroid[d] += embeddings[idx][d];
+
+                // Embed the unified text itself (real semantics beat a centroid)
+                let centroid_str = match embed_text(&client, &ollama_url, &embed_model, embed_dim, &unified_text).await {
+                    Ok(vec) => format!("[{}]", vec.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(",")),
+                    Err(e) => {
+                        error!("Failed to embed consolidated fact for cluster {}: {:?}. Skipping.", i, e);
+                        continue;
                     }
-                }
-                let n_f32 = cluster.len() as f32;
-                for d in 0..dim {
-                    centroid[d] /= n_f32;
-                }
-                
-                // Normalize centroid
-                let mut norm = 0.0;
-                for d in 0..dim {
-                    norm += centroid[d] * centroid[d];
-                }
-                norm = norm.sqrt();
-                if norm > 0.0 {
-                    for d in 0..dim {
-                        centroid[d] /= norm;
-                    }
-                }
-                
-                // Convert centroid to string array for safe halfvec casting
-                let centroid_str = format!("[{}]", centroid.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(","));
+                };
 
                 // 2. Begin transaction
                 let mut tx = pool.begin().await?;
@@ -224,6 +283,56 @@ async fn consolidate_cluster(client: &reqwest::Client, ollama_url: &str, model: 
     }
     
     info!("Successfully consolidated {} clusters.", consolidated_count);
+
+    // 6. Self-Distillation: resolve contradictions via LLM judgment.
+    // Winner = more corroborations (consensus signal); tie → most recent
+    // ("resolve contradições antigas com base nas conclusões mais recentes").
+    // ponytail: cap LLM judgments per tick; the loop runs every ~3h anyway.
+    let max_judgments = 10usize;
+    let mut deactivated: std::collections::HashSet<usize> =
+        clusters.iter().flatten().copied().collect();
+    let mut resolved_count = 0;
+
+    for pair in contradictions.iter().take(max_judgments) {
+        if deactivated.contains(&pair.idx_a) || deactivated.contains(&pair.idx_b) {
+            continue;
+        }
+        let (fa, fb) = (&facts[pair.idx_a], &facts[pair.idx_b]);
+        info!(
+            "Judging potential contradiction: #{} vs #{} (topic sim {:.4})...",
+            fa.id, fb.id, pair.embedding_similarity
+        );
+
+        match judge_contradiction(&client, &ollama_url, &deepseek_model, &fa.fact_text, &fb.fact_text).await {
+            Ok(true) => {
+                let a_wins = (fa.corroborations, fa.created_at) > (fb.corroborations, fb.created_at);
+                let (winner, loser, loser_idx) =
+                    if a_wins { (fa, fb, pair.idx_b) } else { (fb, fa, pair.idx_a) };
+
+                sqlx::query(
+                    "UPDATE epistemic_memory
+                     SET is_active = false, superseded_by = $1,
+                         metadata = jsonb_set(metadata, '{resolution}', '\"contradiction_resolved\"')
+                     WHERE id = $2"
+                )
+                .bind(winner.id)
+                .bind(loser.id)
+                .execute(&pool)
+                .await?;
+
+                info!(
+                    "⚔️ Contradiction resolved: fact #{} superseded by #{} (corroborations {} vs {}).",
+                    loser.id, winner.id, loser.corroborations, winner.corroborations
+                );
+                deactivated.insert(loser_idx);
+                resolved_count += 1;
+            }
+            Ok(false) => info!("  -> Facts #{} and #{} judged compatible.", fa.id, fb.id),
+            Err(e) => error!("Failed to judge pair #{}/#{}: {:?}", fa.id, fb.id, e),
+        }
+    }
+
+    info!("Resolved {} contradictions.", resolved_count);
 
     info!(
         "✅ Dreaming Loop finished successfully in {:.2?}.",

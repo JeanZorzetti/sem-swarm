@@ -134,6 +134,50 @@ class MemoryClient:
             resp.raise_for_status()
             return resp.json()
 
+    # ── Corroborate (Filter → Memory, consensus) ──────────────
+
+    async def corroborate(
+        self,
+        observation_id: int,
+        fact_id: int,
+        similarity: float,
+        confidence_score: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Reinforce an existing fact with a new matching observation (consensus).
+
+        Args:
+            observation_id: ID of the corroborating observation
+            fact_id: ID of the existing fact
+            similarity: Cosine similarity between evidence and fact
+            confidence_score: Confidence of the corroborating evidence
+            metadata: Optional metadata
+
+        Returns:
+            API response with updated corroborations and confidence
+        """
+        payload = {
+            "observation_id": observation_id,
+            "fact_id": fact_id,
+            "similarity": similarity,
+            "confidence_score": confidence_score,
+            "metadata": metadata or {},
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                f"{self.api_url}/memory/corroborate",
+                json=payload,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        logger.info(
+            f"🤝 Observation #{observation_id} corroborates fact #{fact_id} "
+            f"(corroborations={result.get('corroborations')})"
+        )
+        return result
+
     # ── Reject (Filter → Memory) ──────────────────────────────
 
     async def reject(

@@ -109,21 +109,31 @@ async function load() {
     $("#c-obs").textContent = state.total_observations;
     $("#c-task").textContent = state.current_task ? `tarefa: ${state.current_task}` : "";
     $("#c-facts").textContent = state.total_verified_facts;
-    $("#c-active").textContent = `${facts.filter(f => f.is_active).length} ativos na listagem`;
+    $("#c-active").textContent = `${facts.filter(f => f.is_active).length} ativos · consenso: ${rel(state.last_consensus_at)}`;
     const dream = $("#c-dream");
     dream.textContent = rel(state.last_dreaming_loop_at);
     // stale if > 4h (loop ticks every 3h)
     const stale = !state.last_dreaming_loop_at || (Date.now() - new Date(state.last_dreaming_loop_at)) > 4 * 3600e3;
     dream.style.color = stale ? "var(--amber)" : "var(--green)";
 
-    $("#t-facts tbody").innerHTML = facts.length ? facts.map(f => `
+    $("#t-facts tbody").innerHTML = facts.length ? facts.map(f => {
+      const m = f.metadata || {};
+      const corr = m.corroborations ? ` <span class="badge b-processing" title="corroborações (consenso)">×${m.corroborations}</span>` : "";
+      const distilled = m.source === "dreaming_loop" ? ' <span class="badge b-off" title="fato destilado pelo dreaming loop">✨ destilado</span>' : "";
+      const estado = f.is_active
+        ? '<span class="badge b-verified">ativo</span>'
+        : m.resolution === "contradiction_resolved"
+          ? `<span class="badge b-rejected">contradição → #${f.superseded_by ?? "?"}</span>`
+          : `<span class="badge b-off">consolidado → #${f.superseded_by ?? "?"}</span>`;
+      return `
       <tr>
         <td class="id">${f.id}</td>
-        <td>${esc(f.fact_text)}</td>
-        <td><span class="conf"><span class="confbar"><i style="width:${Math.round(f.confidence_score * 100)}%"></i></span>${f.confidence_score.toFixed(2)}</span></td>
-        <td>${f.is_active ? '<span class="badge b-verified">ativo</span>' : `<span class="badge b-off">consolidado → #${f.superseded_by ?? "?"}</span>`}</td>
+        <td>${esc(f.fact_text)}${distilled}</td>
+        <td><span class="conf"><span class="confbar"><i style="width:${Math.round(f.confidence_score * 100)}%"></i></span>${f.confidence_score.toFixed(2)}</span>${corr}</td>
+        <td>${estado}</td>
         <td class="when">${fmt(f.created_at)}</td>
-      </tr>`).join("") : `<tr><td colspan="5" class="empty">Nenhum fato ainda.</td></tr>`;
+      </tr>`;
+    }).join("") : `<tr><td colspan="5" class="empty">Nenhum fato ainda.</td></tr>`;
 
     $("#t-obs tbody").innerHTML = obs.length ? obs.map(o => `
       <tr>

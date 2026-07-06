@@ -126,36 +126,40 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
         logger.info("🔍 Buscando top candidatos no banco para deduplicação exata...")
         search_result = await memory.search(embedding, top_k=5)
         
-        is_duplicate = False
+        duplicate_fact_id = None
+        duplicate_sim = 0.0
         related_fact_id = None
-        
+
         if search_result.get("results"):
             # Extrai os embeddings retornados pela busca para verificação exata
             candidates = search_result["results"]
             targets = [c.get("embedding", []) for c in candidates if c.get("embedding")]
-            
+
             if targets:
                 logger.info(f"⚡ Calculando similaridade exata (SIMD/Rust) contra {len(targets)} fatos...")
                 exact_scores = batch_cosine(embedding, targets)
-                
+
                 # O batch_cosine retorna list[tuple[int, float]] => [(idx_targets, similarity), ...]
                 for idx, sim in exact_scores:
                     target_fact_id = candidates[idx]["id"]
-                    
+
                     if sim >= 0.95:
-                        logger.warning(f"⚠️ Fato Duplicado detectado! Similaridade {sim:.4f} com Fato #{target_fact_id}")
-                        is_duplicate = True
-                        reasoning = f"Fato rejeitado por deduplicação. Muito similar ({sim:.4f}) ao fato #{target_fact_id}."
+                        logger.info(f"🤝 Fato equivalente já existe (sim {sim:.4f} com #{target_fact_id}) — corroborando (consenso).")
+                        duplicate_fact_id = target_fact_id
+                        duplicate_sim = sim
                         break
                     elif sim >= 0.70 and not related_fact_id:
                         logger.info(f"🔗 Tópico Relacionado identificado: Similaridade {sim:.4f} com Fato #{target_fact_id}")
                         related_fact_id = target_fact_id
-        
-        if is_duplicate:
-            await memory.reject(
+
+        if duplicate_fact_id:
+            # Consenso: evidência independente reforça o fato em vez de virar lixo
+            await memory.corroborate(
                 observation_id=obs_id,
-                reason=reasoning,
-                metadata={"filter_model": REASONING_MODEL, "dedup": True}
+                fact_id=duplicate_fact_id,
+                similarity=duplicate_sim,
+                confidence_score=confidence,
+                metadata={"filter_model": REASONING_MODEL},
             )
         else:
             metadata = {"reasoning": reasoning, "filter_model": REASONING_MODEL}

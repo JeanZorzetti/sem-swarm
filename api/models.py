@@ -88,6 +88,38 @@ class ObservationReject(BaseModel):
     )
 
 
+class FactCorroborate(BaseModel):
+    """Payload sent by Filter agents when a new observation matches an existing fact.
+
+    Consensus mechanism: instead of discarding near-duplicates, the swarm
+    reinforces the existing fact (stigmergic agreement between agents).
+    """
+    observation_id: int = Field(
+        ...,
+        description="ID of the observation that corroborates the fact",
+    )
+    fact_id: int = Field(
+        ...,
+        description="ID of the existing fact being corroborated",
+    )
+    similarity: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Cosine similarity between the new evidence and the fact",
+    )
+    confidence_score: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence the Filter assigned to the corroborating evidence",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional metadata about the corroboration",
+    )
+
+
 class FactVerify(BaseModel):
     """Payload sent by Filter agents to verify an observation and promote it to a fact."""
     observation_id: int = Field(
