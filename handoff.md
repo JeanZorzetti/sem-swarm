@@ -1,30 +1,29 @@
-# Handoff — E2E Sprint 1 (2026-07-05)
+# Handoff — E2E Sprint 1 + fechamento de gaps (2026-07-05)
 
 ## Feito
-Primeira validação ponta-a-ponta do pipeline contra o banco de PRODUÇÃO:
 
-1. **Scout** (phi4-mini + nuextract locais) → extraiu 2 observações de 1 input e depositou via `POST /memory/observe` (obs #1 e #2).
-2. **Filter** (phi4-mini + nuextract) → julgou as 2 pendentes, aprovou ambas, rodou dedup exata via Rust `sem_vector` (batch_cosine SIMD) e promoveu a fatos via `POST /memory/verify` (fatos #1 e #2, confiança 1.0).
-3. **Synthesizer** → `POST /memory/search` recuperou os 2 fatos e gerou resposta com phi4-mini.
-4. **DB prod**: observações `verified`, fatos ativos com FK correta, `swarm_state` atualizado pela API (`total_observations=2`, `total_verified_facts=2`). Encoding UTF-8 íntegro no banco.
+### Rodada 1 — E2E local→prod (API prod-parity rodada local apontada pro DB de prod)
+Pipeline validado ponta-a-ponta pela primeira vez: Scout (phi4-mini+nuextract) → `/memory/observe` → Filter (dedup Rust SIMD) → `/memory/verify` → Synthesizer → `/memory/search`. Obs/fatos #1–#2 no banco, `swarm_state` atualizado pela API, UTF-8 íntegro.
 
-A API usada foi a imagem do **Dockerfile raiz (mesma de prod)**, rodando local apontada pro DB de prod — porque a API deployada não tem rota pública (ver pendências).
+### Rodada 2 — E2E 100% REMOTO (após exposição dos domínios no EasyPanel)
+- **Gap 1 FECHADO (ops)**: API pública no ar — `GET /health` = healthy. Ollama da VPS também exposto, com `qwen3-embedding` e `qwen2.5:7b-instruct` pulled.
+- **Gap 2 FECHADO (código)**: `MemoryClient` e o `--api-url` do scout agora leem `SEM_API_URL` do env. Validado: scout depositou obs #3–#4, filter aprovou e promoveu, synthesizer respondeu **corretamente** (0,5% vs 3–10% de absorção) — tudo pela URL pública, sem API local.
+- **Gap 4 FECHADO (código)**: dreaming loop grava heartbeat em `swarm_state.last_dreaming_loop_at` a cada tick, mesmo sem nada a consolidar. Validado com a imagem Docker de prod-parity contra o DB de prod (tick registrado; ciclo completo em 2.8s; o wrapper do Dockerfile dorme 3h entre ticks).
 
 ## Decisões
-- Dados de teste (obs/fatos #1 e #2 sobre porcelanato técnico) ficaram no banco — são inofensivos e servem de seed.
+- Dados de teste (obs/fatos #1–#4 sobre porcelanato/cerâmica) ficaram no banco como seed.
+- Embeddings reais (gap 3) ficaram de fora desta rodada de propósito: trocar agora misturaria vetores reais com os 4 mocks já persistidos; fechar junto com uma limpeza/re-embed do seed.
 
-## Pendências / Gaps encontrados (em ordem de impacto)
-1. **API sem domínio público no EasyPanel** — o serviço está deployado mas nenhum host responde (probes deram 404 no proxy). Sem isso, os agentes locais não alcançam a memória compartilhada de fora. → atribuir domínio no EasyPanel.
-2. **`MemoryClient()` hard-coded `localhost:8000` no filter e synthesizer** — só o scout tem `--api-url`. Mesmo com domínio público, filter/synthesizer não conseguem apontar pra VPS. → ler `SEM_API_URL` do env no `MemoryClient`.
-3. **Embeddings ainda são mock** (hash→random 2048d em `filter.py` e `synthesizer.py`) — busca semântica retorna ruído; dedup só pega texto idêntico; dreaming loop nunca vai formar cluster ≥0.96. → expor endpoint de embedding (Ollama VPS não responde externamente na porta padrão).
-4. **Dreaming loop sem heartbeat** — nunca escreve `swarm_state.last_dreaming_loop_at` (coluna existe e está NULL); impossível confirmar de fora que o serviço deployado está vivo. → gravar timestamp a cada tick, mesmo quando não consolida.
-5. **Qualidade**: nuextract gerou typos ("absorcição", "caracterição") e perdeu o trecho "adequado para áreas externas" na extração; o synthesizer então respondeu errado à pergunta sobre área externa (alucinou "não serve" apesar do prompt mandar usar só os fatos). Esperado com SLMs + contexto incompleto, mas é métrica a acompanhar no Sprint 3 (benchmarks).
+## Descoberta importante (gap 3 está a uma flag de distância)
+`qwen3-embedding` retorna **4096 dims** por padrão, mas a coluna é `halfvec(2048)` — e HNSW em halfvec só indexa até ~4000 dims, então migrar a coluna não é opção. Porém o Ollama aceita `{"dimensions": 2048}` no `/api/embed` (MRL) e retorna 2048 certinho. O fix do gap 3 é: chamar o embed real com `dimensions: 2048` em `filter.py`/`synthesizer.py` (substituindo `get_mock_embedding`) + re-embedar/limpar os 4 fatos seed.
+
+## Pendências
+1. **Ops — redeploy do serviço `sem_swarm_dreaming` no EasyPanel** pra pegar o commit do heartbeat, e setar no env dele `OLLAMA_DEEP_REASONING_MODEL=qwen2.5:7b-instruct` (nem `deepseek-r1:14b` nem o default `phi4-mini` estão pulled no Ollama da VPS).
+2. **Gap 3**: embeddings reais com `dimensions: 2048` (ver acima) — destrava busca semântica de verdade, dedup real e consolidação do dreaming.
+3. **Gap 5** (qualidade): nuextract gera typos e perde trechos na extração (ex.: perdeu "adequado para áreas externas" na rodada 1) — métrica pros benchmarks do Sprint 3.
+4. UI: inspetor read-only mínimo (pending/fatos/swarm state) consumindo a API pública.
 
 ## Gotchas
-- Console Windows mostra mojibake nos logs dos agentes (emoji/acentos), mas os dados chegam UTF-8 corretos no banco — é só o encoding do terminal.
-- Stack local do compose (`sem-api` + `sem-postgres`) ocupa a porta 8000; foi parada durante o E2E e restaurada ao final.
-
-## Próximos
-- Fechar gaps 1–2 (rota pública + `SEM_API_URL`) → daí o E2E roda 100% remoto.
-- Trocar mock embedding por real quando houver endpoint de embedding acessível.
-- UI: inspetor read-only mínimo (pending/fatos/swarm state) consumindo a API — depois dos gaps acima.
+- Console Windows mostra mojibake nos logs dos agentes; os dados chegam UTF-8 corretos no banco.
+- Toolchain Rust local (Windows/GNU) falha com `dlltool not found` em deps — validar o crate sempre via docker build do `rust/sem-dreaming/Dockerfile` (mesmo caminho do EasyPanel).
+- O container do dreaming nunca "termina": o Dockerfile envolve o binário em loop com sleep de 3h — é o design do serviço, não travamento.

@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger("sem-swarm.memory_client")
 
-DEFAULT_API_URL = "http://localhost:8000"
+DEFAULT_API_URL = os.getenv("SEM_API_URL", "http://localhost:8000")
 DEFAULT_TIMEOUT = 30.0
 
 

@@ -57,6 +57,13 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect to PostgreSQL")?;
 
+    // Heartbeat: record this tick even when there is nothing to consolidate,
+    // so the outside world can tell the deployed loop is alive.
+    sqlx::query("UPDATE swarm_state SET last_dreaming_loop_at = NOW() WHERE id = 1")
+        .execute(&pool)
+        .await
+        .context("Failed to write dreaming heartbeat")?;
+
     // 2. Fetch active facts
     info!("Fetching active epistemic facts...");
     let facts = sqlx::query_as::<_, EpistemicFact>(

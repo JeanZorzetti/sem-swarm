@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -454,8 +455,8 @@ async def main():
     parser.add_argument(
         "--api-url",
         type=str,
-        default="http://localhost:8000",
-        help="Memory API URL",
+        default=os.getenv("SEM_API_URL", "http://localhost:8000"),
+        help="Memory API URL (env: SEM_API_URL)",
     )
     parser.add_argument(
         "--verbose", "-v",
