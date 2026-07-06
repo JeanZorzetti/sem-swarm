@@ -86,10 +86,22 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
 
     logger.info("🔧 Stage 2: Extraindo decisão via NuExtract...")
     extraction_text = f"Observação Original: {raw_content}\nRaciocínio: {reasoning_text}"
-    extracted_json = await extractor.extract(
+    extracted_json = await extractor.extract_with_retry(
         text=extraction_text,
         schema=template,
+        max_retries=2,
     )
+
+    # Extração TOTALMENTE vazia = flub do NuExtract, não um veredito.
+    # Rejeição legítima sempre traz reasoning; aqui a obs deve continuar
+    # 'processing' para ser rejulgada via --reprocess-stuck (nunca virar
+    # rejeição com motivo em branco — perderíamos um fato verdadeiro).
+    if (
+        not extracted_json.get("is_valid")
+        and not str(extracted_json.get("reasoning_summary", "")).strip()
+        and not str(extracted_json.get("clean_fact", "")).strip()
+    ):
+        raise RuntimeError("extração inconclusiva: NuExtract devolveu campos vazios")
 
     try:
         # extracted_json is already a dict, NuExtractClient.extract() returns a dict
