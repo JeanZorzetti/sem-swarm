@@ -1,4 +1,16 @@
-# Handoff — Sprints 1, 2 e 3 (2026-07-05)
+# Handoff — Sprints 1–3 + primeiro uso real (2026-07-06)
+
+## 2026-07-06 — Primeiro uso real: ingestão do ROI Labs Growth Partner
+
+- **`scripts/ingest.py` (novo)**: ingestão de fontes reais em 3 modos — `--catalog` (porcelanatos.json → 1 obs determinística/produto, sem LLM), `--files` (md/astro/txt → limpa markup, chunks ~4k chars → pipeline Scout completo), `--rank-csv` (só linhas com posição). Carrega o `.env` do projeto automaticamente (sem override de env já setada).
+- **Primeira carga real em PROD**: 30 obs do catálogo (obs #11–#40, UTF-8 validado no banco) + tese.md + mercado.md + fornecedores-goiania.md + 7 guias AEO via Scout. Filter daemon (`--loop 45`) promovendo a fatos.
+- **Docs novos**: `docs/VISAO-GERAL.md` + `docs/DOCUMENTO-EXECUTIVO.md` (didáticos, PT-BR). Runbook da ingestão no vault do roilabs: `Docs/Obsidian/80-dev/sem-swarm-ingestao.md`.
+- **Gotcha**: rank-tracking.csv de 2026-07-03 não tinha NENHUMA posição → 0 obs dessa fonte; re-rodar quando o site rankear.
+- Re-rodar ingestão é seguro por design: duplicata ≥0.95 vira corroboração (consenso), não lixo.
+
+---
+
+# Handoff anterior — Sprints 1, 2 e 3 (2026-07-05)
 
 ## Sprint 3 SHIPPED — Coordination + Benchmarks
 
