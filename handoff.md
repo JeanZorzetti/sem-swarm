@@ -23,12 +23,16 @@ Pipeline validado ponta-a-ponta pela primeira vez: Scout (phi4-mini+nuextract) �
 ## Descoberta importante (gap 3 está a uma flag de distância)
 `qwen3-embedding` retorna **4096 dims** por padrão, mas a coluna é `halfvec(2048)` — e HNSW em halfvec só indexa até ~4000 dims, então migrar a coluna não é opção. Porém o Ollama aceita `{"dimensions": 2048}` no `/api/embed` (MRL) e retorna 2048 certinho. O fix do gap 3 é: chamar o embed real com `dimensions: 2048` em `filter.py`/`synthesizer.py` (substituindo `get_mock_embedding`) + re-embedar/limpar os 4 fatos seed.
 
+## Rodada 4 — UI inspetora NO AR (`6380dc0`)
+- `GET /` da API serve inspetor read-only single-file (dark, vanilla JS, auto-refresh 30s): cards de swarm state (observações, fatos, último tick do dreaming com alerta de staleness >4h), tabela de fatos (confiança, ativo/consolidado) e observações recentes com badge de status.
+- Novos endpoints read-only `GET /memory/facts` e `GET /memory/observations` — a UI **não pode** usar `/memory/pending` (ele marca as observações como `processing`, tem efeito colateral).
+- Deploy automático por push confirmado (API e dreaming). Verificado em prod com screenshot: https://sofia-sem-swarm-api.7c17iw.easypanel.host/ — e o heartbeat do dreaming está **ticking em produção** (serviço redeployou sozinho e registrou tick).
+
 ## Pendências
-1. **Ops — redeploy do serviço `sem_swarm_dreaming` no EasyPanel** pra pegar o commit do heartbeat, e setar no env dele `OLLAMA_DEEP_REASONING_MODEL=qwen2.5:7b-instruct` (nem `deepseek-r1:14b` nem o default `phi4-mini` estão pulled no Ollama da VPS).
-2. ~~Gap 3~~ **FECHADO** (rodada 3 acima).
-3. **Gap 5** (qualidade): nuextract gera typos e perde trechos na extração (ex.: perdeu "adequado para áreas externas" na rodada 1) — métrica pros benchmarks do Sprint 3.
-4. UI: inspetor read-only mínimo (pending/fatos/swarm state) consumindo a API pública.
-5. (Opcional, se o notebook continuar sofrendo) fallback pra rodar o raciocínio do filter na VPS (`qwen2.5:7b-instruct`) — a iGPU Iris Xe não ajuda: "11,8 GB" é RAM compartilhada, mesma banda da CPU.
+1. **Ops — env do dreaming**: setar `OLLAMA_DEEP_REASONING_MODEL=qwen2.5:7b-instruct` no serviço (nem `deepseek-r1:14b` nem o default `phi4-mini` estão pulled no Ollama da VPS; só importa quando houver cluster a consolidar).
+2. **Gap 5** (qualidade): nuextract gera typos e perde trechos na extração — métrica pros benchmarks do Sprint 3.
+3. Sprint 2 — Self-Distillation + Consensus.
+4. (Opcional, se o notebook continuar sofrendo) fallback pra rodar o raciocínio do filter na VPS (`qwen2.5:7b-instruct`) — a iGPU Iris Xe não ajuda: "11,8 GB" é RAM compartilhada, mesma banda da CPU. `OLLAMA_MAX_LOADED_MODELS=1` no Ollama local também alivia ~3 GB de RAM.
 
 ## Gotchas
 - Console Windows mostra mojibake nos logs dos agentes; os dados chegam UTF-8 corretos no banco.
