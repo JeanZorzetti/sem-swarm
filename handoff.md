@@ -10,7 +10,7 @@
 - **3 fixes de robustez achados pela carga real** (`01b1a2a`, `82fad1e`, `b864e81`):
   1. Falha numa obs não estrangula mais o lote do filter (obs ficavam órfãs em `processing` — recuperáveis agora via `--reprocess-stuck`).
   2. Extração vazia do NuExtract ≠ rejeição (um fato de catálogo verdadeiro foi rejeitado com motivo em branco).
-  3. NuExtract flubba ~1/3 das obs de catálogo deterministicamente → fallback de decisão via phi4-mini + JSON schema.
+  3. NuExtract flubba ~1/3 das obs de catálogo deterministicamente → fallback de decisão via phi4-mini + JSON schema; invariante refinado em `d5acbef` (rejeição sem justificativa OU aprovação sem fato = inconclusivo; `_parse_verdict` centraliza o parse). Obs de catálogo rejeitadas por variância do juiz foram redepositadas via sweep idempotente (`metadata.redeposit_of`: #18→#150, #17→#151, #14→#152).
 - **Validação E2E com dados reais**: Synthesizer respondeu preços do catálogo corretamente (Persia Beige 120,99; Pulpis Grigio 120,99; Polido 137,99; Strutturato 139,99) — fundamentado, zero invenção. Gotcha: local exige `OLLAMA_REASONING_MODEL=phi4-mini` (o `.env` pede qwen3:8b, não puxado).
 - **Pendência**: deixar `python -m agents.filter --reprocess-stuck --loop 30 --limit 5` rodando até zerar a fila (~130 obs, ~5h em CPU); typos tipo "Goiçana" nos clean_facts (gap 5) — candidato: passe de revisão no dreaming ou prompt do filter.
 
