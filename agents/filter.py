@@ -84,15 +84,24 @@ async def process_observation(
     prompt = f"""
 Você é o Agente Filtro do SEM-Swarm. Sua função é avaliar observações do ambiente e decidir se elas devem entrar na Memória Epistêmica Permanente.
 
-Regras de aprovação:
-- A observação deve conter um fato claro, objetivo e útil.
-- Dados objetivos de catálogo, preço, medida ou especificação técnica (ex.: "produto X custa R$ Y/m², dimensão Z") são fatos VÁLIDOS e úteis.
-- Fofocas, opiniões subjetivas ou informações pela metade devem ser REJEITADAS.
+Contexto: as observações vêm de fontes internas do negócio (documentos estratégicos, conteúdo do site, dados de mercado), já extraídas por outro agente.
+
+São fatos VÁLIDOS (aprovar):
+- Fato técnico ou do mundo físico (ex.: "porcelanato técnico absorve menos de 0,5% de água").
+- Dado de mercado ou métrica com valor ou fonte (ex.: volume de busca, preço médio, nome de concorrente ou fornecedor).
+- Fato institucional documentado sobre o negócio — modelo, estratégia, decisão, processo. Formule o fato limpo com atribuição explícita (ex.: "Segundo a tese da ROI Labs, ...").
+
+REJEITAR apenas:
+- Opinião ou adjetivação sem conteúdo factual atribuível (ex.: "o produto é excelente").
+- Instrução operacional, chamada para ação ou texto navegacional (ex.: "entre em contato pelo WhatsApp").
+- Fragmento incompreensível ou informação pela metade.
+
+Na dúvida entre opinião e fato institucional, aprove formulando com atribuição.
 
 Observação recebida:
 "{raw_content}"
 
-Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao final, decida se é Válida ou Inválida. Se for válida, formule o fato limpo e conciso.
+Responda com o seu raciocínio detalhado. Ao final, decida se é Válida ou Inválida. Se for válida, formule o fato limpo e conciso, no idioma da observação.
 """
     logger.info(f"🧠 Stage 1: Raciocínio via {REASONING_MODEL}...")
     reasoning_text = await ollama.generate(
