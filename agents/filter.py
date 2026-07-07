@@ -41,6 +41,31 @@ REASONING_MODEL = "phi4-mini:latest"
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "2048"))
 
 
+def _parse_verdict(data: dict) -> tuple[bool, str, float, str]:
+    """Normalize the extracted judgment fields (NuExtract or fallback)."""
+    is_valid = data.get("is_valid", False)
+    if isinstance(is_valid, str):
+        is_valid = is_valid.lower() in ["true", "1", "yes", "sim", "válida", "valida"]
+    is_valid = bool(is_valid)
+    reasoning = str(data.get("reasoning_summary", "") or "").strip()
+    conf_raw = data.get("confidence_score", 0.0)
+    try:
+        confidence = float(conf_raw) if str(conf_raw).strip() else 0.0
+    except (ValueError, TypeError):
+        confidence = 0.0
+    fact = str(data.get("clean_fact", "") or "").strip()
+    return is_valid, reasoning, confidence, fact
+
+
+def _inconclusive(is_valid: bool, reasoning: str, fact: str) -> bool:
+    """
+    Um veredito precisa se sustentar: rejeição sem justificativa não é
+    rejeição (flub do extrator já rejeitou fato verdadeiro com motivo em
+    branco), e aprovação sem fato limpo não tem o que promover.
+    """
+    return (not is_valid and not reasoning) or (is_valid and not fact)
+
+
 async def process_observation(
     obs: dict,
     ollama: OllamaClient,
@@ -92,21 +117,14 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
         max_retries=2,
     )
 
-    def _inconclusive(data: dict) -> bool:
-        # Rejeição legítima sempre traz reasoning; tudo vazio = flub do
-        # extrator, não um veredito (perderíamos um fato verdadeiro).
-        return (
-            not data.get("is_valid")
-            and not str(data.get("reasoning_summary", "")).strip()
-            and not str(data.get("clean_fact", "")).strip()
-        )
+    is_valid, reasoning, confidence, fact = _parse_verdict(extracted_json)
 
-    if _inconclusive(extracted_json):
+    if _inconclusive(is_valid, reasoning, fact):
         # NuExtract determinístico flubba SEMPRE no mesmo input (~1/3 das
         # obs de catálogo) — retry não resolve. Fallback: decisão via JSON
         # estruturado do modelo de raciocínio (mesmo padrão do Scout).
         logger.warning(
-            f"⚠️ NuExtract inconclusivo p/ obs #{obs_id} — fallback JSON via {REASONING_MODEL}"
+            f"⚠️ Extração inconclusiva p/ obs #{obs_id} — fallback JSON via {REASONING_MODEL}"
         )
         extracted_json = await ollama.generate_structured(
             model=REASONING_MODEL,
@@ -126,29 +144,9 @@ Responda com o seu raciocínio detalhado. Avalie a objetividade e utilidade. Ao 
             },
             temperature=0.1,
         )
-        if _inconclusive(extracted_json):
+        is_valid, reasoning, confidence, fact = _parse_verdict(extracted_json)
+        if _inconclusive(is_valid, reasoning, fact):
             raise RuntimeError("extração inconclusiva mesmo após fallback estruturado")
-
-    try:
-        # extracted_json is already a dict, NuExtractClient.extract() returns a dict
-        data = extracted_json
-        is_valid = bool(data.get("is_valid", False))
-        reasoning = str(data.get("reasoning_summary", "Sem justificativa"))
-        conf_raw = data.get("confidence_score", 0.0)
-        try:
-            confidence = float(conf_raw) if str(conf_raw).strip() else 0.0
-        except ValueError:
-            confidence = 0.0
-        fact = str(data.get("clean_fact", "")).strip()
-        
-        # Additional safety check for is_valid if NuExtract returned a string
-        if isinstance(data.get("is_valid"), str):
-            is_valid = data["is_valid"].lower() in ["true", "1", "yes", "sim", "válida", "valida"]
-            
-    except Exception as e:
-        logger.error(f"❌ Falha no parse do NuExtract: {e}. Rejeitando por segurança.")
-        await memory.reject(obs_id, f"Falha de extração JSON: {e}")
-        return
 
     # 3. Decisão e Deduplicação Semântica (Rust Accelerated)
     if is_valid and fact:
