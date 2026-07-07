@@ -36,8 +36,11 @@ logger = logging.getLogger("sem-swarm.filter")
 
 # ── Configuration ─────────────────────────────────────────────
 
-# O modelo roteador/avaliador local
-REASONING_MODEL = "phi4-mini:latest"
+# Juiz do filtro: 3.8B local por default; promovível a modelo maior (ex.:
+# qwen2.5:7b-instruct na VPS) via env — o phi4-mini provou não sustentar
+# padrão epistêmico nuançado (3 iterações de prompt, ~90% de falso negativo).
+REASONING_MODEL = os.getenv("FILTER_REASONING_MODEL", "phi4-mini:latest")
+FILTER_OLLAMA_URL = os.getenv("FILTER_OLLAMA_URL", "http://localhost:11434")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "2048"))
 
 
@@ -89,14 +92,14 @@ Contexto: as observações vêm de fontes internas do negócio (documentos estra
 São fatos VÁLIDOS (aprovar):
 - Fato técnico ou do mundo físico (ex.: "porcelanato técnico absorve menos de 0,5% de água").
 - Dado de mercado ou métrica com valor ou fonte (ex.: volume de busca, preço médio, nome de concorrente ou fornecedor).
-- Fato institucional documentado sobre o negócio — modelo, estratégia, decisão, processo. Formule o fato limpo com atribuição explícita (ex.: "Segundo a tese da ROI Labs, ...").
+- Fato institucional sobre o negócio — modelo, estratégia, decisão, processo. A observação NÃO precisa citar fonte: ela já vem de documento interno. Ao formular o fato limpo, prefixe você mesmo com "Segundo a documentação da ROI Labs, ...".
 
 REJEITAR apenas:
-- Opinião ou adjetivação sem conteúdo factual atribuível (ex.: "o produto é excelente").
+- Opinião ou adjetivação pura, sem nenhum conteúdo factual (ex.: "o produto é excelente").
 - Instrução operacional, chamada para ação ou texto navegacional (ex.: "entre em contato pelo WhatsApp").
 - Fragmento incompreensível ou informação pela metade.
 
-Na dúvida entre opinião e fato institucional, aprove formulando com atribuição.
+Ausência de fonte citada NUNCA é motivo de rejeição. Na dúvida entre opinião e fato institucional, aprove.
 
 Observação recebida:
 "{raw_content}"
@@ -282,7 +285,9 @@ async def main():
     # Silenciar httpx
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    ollama = OllamaClient()
+    # Juiz possivelmente remoto (VPS, CPU): timeout largo — o generate compete
+    # com o embed pelo OLLAMA_MAX_LOADED_MODELS=1 (swap de modelo por request).
+    ollama = OllamaClient(local_url=FILTER_OLLAMA_URL, timeout=480.0)
     extractor = NuExtractClient()
     memory = MemoryClient()
     embedder = EmbeddingGenerator(
