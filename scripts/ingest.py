@@ -58,7 +58,9 @@ def load_dotenv(path: Path) -> None:
 load_dotenv(PROJECT_ROOT / ".env")
 
 from agents.scout import ScoutAgent  # noqa: E402 (needs .env loaded first)
+from core.embeddings import EmbeddingGenerator  # noqa: E402
 from core.memory_client import MemoryClient  # noqa: E402
+from core.vector_ops import batch_cosine  # noqa: E402
 
 
 # ── Text cleaning / chunking ──────────────────────────────────
@@ -163,7 +165,58 @@ def rank_observations(csv_path: Path) -> list[dict]:
     return obs
 
 
-async def deposit_direct(observations: list[dict], memory: MemoryClient, agent_id: str) -> int:
+TRUSTED_SOURCES = ("catalogo-roilabs", "rank-tracking")
+
+
+def make_embedder() -> EmbeddingGenerator:
+    return EmbeddingGenerator(
+        model=os.getenv("OLLAMA_EMBED_MODEL", "qwen3-embedding"),
+        vps_url=os.getenv("OLLAMA_VPS_URL"),
+        dimensions=int(os.getenv("EMBEDDING_DIM", "2048")),
+    )
+
+
+async def promote_trusted(
+    obs_id: int, text: str, metadata: dict, memory: MemoryClient, embedder: EmbeddingGenerator
+) -> str:
+    """
+    Fonte determinística (catálogo/CSV) dispensa juiz LLM — o dado é verdade
+    por construção. Preserva a semântica de consenso: quase-duplicata (≥0.95)
+    corrobora o fato existente em vez de duplicar. Falha de embedding deixa a
+    obs pendente (retry via --promote-pending).
+    """
+    embedding = await embedder.embed(text)
+    duplicate_id, duplicate_sim = None, 0.0
+    search = await memory.search(embedding, top_k=5)
+    candidates = [c for c in search.get("results", []) if c.get("embedding")]
+    targets = [c["embedding"] for c in candidates]
+    # Identidade determinística: produtos irmãos ("Strato Marmo Bege" vs
+    # "Grigio") cruzam 0.95 — só o slug igual (ou texto ~idêntico) é dup.
+    slug = metadata.get("slug")
+    if targets:
+        for idx, sim in batch_cosine(embedding, targets):
+            cand = candidates[idx]
+            same_slug = slug and cand.get("metadata", {}).get("slug") == slug
+            if same_slug or sim >= 0.995:
+                duplicate_id, duplicate_sim = cand["id"], sim
+                break
+    if duplicate_id:
+        await memory.corroborate(
+            observation_id=obs_id, fact_id=duplicate_id, similarity=duplicate_sim,
+            confidence_score=1.0, metadata={"trusted_source": metadata.get("source")},
+        )
+        return f"corroborou fato #{duplicate_id} (sim {duplicate_sim:.4f})"
+    await memory.verify(
+        observation_id=obs_id, fact_text=text, embedding=embedding,
+        confidence_score=1.0, metadata={**metadata, "trusted": True},
+    )
+    return "fato novo"
+
+
+async def deposit_direct(
+    observations: list[dict], memory: MemoryClient, agent_id: str,
+    embedder: EmbeddingGenerator | None = None,
+) -> int:
     await memory.heartbeat(agent_id, "scout")
     ok = 0
     for o in observations:
@@ -171,10 +224,42 @@ async def deposit_direct(observations: list[dict], memory: MemoryClient, agent_i
             resp = await memory.observe(
                 raw_content=o["text"], source_agent=agent_id, metadata=o["metadata"]
             )
+            outcome = ""
+            if embedder:
+                outcome = " → " + await promote_trusted(
+                    resp["id"], o["text"], o["metadata"], memory, embedder
+                )
             ok += 1
-            logger.info(f"📤 obs #{resp['id']}: {o['text'][:90]}...")
+            logger.info(f"📤 obs #{resp['id']}{outcome}: {o['text'][:80]}...")
         except Exception as e:
-            logger.error(f"❌ Falha ao depositar: {e}")
+            logger.error(f"❌ Falha ao depositar/promover: {e}")
+    return ok
+
+
+async def promote_pending(memory: MemoryClient, embedder: EmbeddingGenerator) -> int:
+    """Promove obs de fontes confiáveis paradas em pending/processing
+    (cargas antigas que passavam pelo juiz, redepositos, falhas de embed)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"{memory.api_url}/memory/observations", params={"limit": 200})
+        resp.raise_for_status()
+        stuck = [
+            o for o in resp.json()
+            if o["metadata"].get("source") in TRUSTED_SOURCES
+            and o["status"] in ("pending", "processing")
+        ]
+    logger.info(f"♻️ {len(stuck)} obs de fonte confiável em pending/processing")
+    ok = 0
+    for o in stuck:
+        try:
+            outcome = await promote_trusted(
+                o["id"], o["raw_content"], o["metadata"], memory, embedder
+            )
+            ok += 1
+            logger.info(f"✅ obs #{o['id']} → {outcome}")
+        except Exception as e:
+            logger.error(f"❌ obs #{o['id']} falhou (fica pra retry): {e}")
     return ok
 
 
@@ -185,11 +270,15 @@ async def main() -> None:
     parser.add_argument("--catalog", type=Path, help="porcelanatos.json (1 obs/produto, sem LLM)")
     parser.add_argument("--files", type=Path, nargs="+", help="arquivos .md/.astro/.txt via Scout")
     parser.add_argument("--rank-csv", type=Path, help="rank-tracking.csv (só linhas com posição)")
+    parser.add_argument(
+        "--promote-pending", action="store_true",
+        help="promove obs de fontes confiáveis paradas em pending/processing (manutenção)",
+    )
     parser.add_argument("--api-url", default=os.getenv("SEM_API_URL", "http://localhost:8000"))
     args = parser.parse_args()
 
-    if not (args.catalog or args.files or args.rank_csv):
-        parser.error("informe ao menos uma fonte: --catalog, --files ou --rank-csv")
+    if not (args.catalog or args.files or args.rank_csv or args.promote_pending):
+        parser.error("informe uma fonte (--catalog/--files/--rank-csv) ou --promote-pending")
 
     logging.basicConfig(
         level=logging.INFO,
@@ -204,17 +293,21 @@ async def main() -> None:
         sys.exit(1)
 
     total = 0
+    embedder = make_embedder()
+
+    if args.promote_pending:
+        total += await promote_pending(memory, embedder)
 
     if args.catalog:
         obs = catalog_observations(args.catalog)
-        logger.info(f"📦 Catálogo: {len(obs)} produtos com preço → depositando direto...")
-        total += await deposit_direct(obs, memory, "ingest-catalog")
+        logger.info(f"📦 Catálogo: {len(obs)} produtos com preço → trusted (sem juiz LLM)...")
+        total += await deposit_direct(obs, memory, "ingest-catalog", embedder=embedder)
 
     if args.rank_csv:
         obs = rank_observations(args.rank_csv)
-        logger.info(f"📈 Rank tracking: {len(obs)} linhas com posição → depositando direto...")
+        logger.info(f"📈 Rank tracking: {len(obs)} linhas com posição → trusted (sem juiz LLM)...")
         if obs:
-            total += await deposit_direct(obs, memory, "ingest-rank")
+            total += await deposit_direct(obs, memory, "ingest-rank", embedder=embedder)
 
     if args.files:
         scout = ScoutAgent(agent_id="scout-roilabs", api_url=args.api_url)
