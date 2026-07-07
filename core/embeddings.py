@@ -37,6 +37,7 @@ class EmbeddingGenerator:
         vps_url: str | None = None,
         fallback_model: str = FALLBACK_LOCAL_MODEL,
         dimensions: int | None = None,
+        timeout: float = 180.0,
     ):
         self.model = model
         self.local_url = local_url.rstrip("/")
@@ -45,6 +46,9 @@ class EmbeddingGenerator:
         # MRL truncation: qwen3-embedding outputs 4096 dims by default, but the
         # DB column is halfvec(2048) (HNSW on halfvec caps at ~4000 dims).
         self.dimensions = dimensions
+        # Generous default: with OLLAMA_MAX_LOADED_MODELS=1 on the VPS, an
+        # embed may queue behind a 7B generate plus a model swap.
+        self.timeout = timeout
 
     def _get_endpoint_and_model(self) -> tuple[str, str]:
         """
@@ -61,7 +65,7 @@ class EmbeddingGenerator:
         if self.dimensions:
             payload["dimensions"] = self.dimensions
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(
                     f"{url}/api/embed",
                     json=payload,
@@ -71,7 +75,16 @@ class EmbeddingGenerator:
 
             embeddings = data.get("embeddings", [])
             if embeddings and embeddings[0]:
-                return embeddings[0]
+                vector = embeddings[0]
+                # Wrong-dimension vector (e.g. 768d nomic fallback when the DB
+                # expects 2048) must fail cleanly, never be returned silently.
+                if self.dimensions and len(vector) != self.dimensions:
+                    logger.warning(
+                        f"Embedding from {url} [{model}] has {len(vector)} dims, "
+                        f"expected {self.dimensions} — discarding"
+                    )
+                    return None
+                return vector
             return None
         except Exception as e:
             logger.warning(f"Embedding failed on {url} with {model}: {e}")

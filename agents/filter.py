@@ -56,6 +56,8 @@ def _parse_verdict(data: dict) -> tuple[bool, str, float, str]:
         confidence = float(conf_raw) if str(conf_raw).strip() else 0.0
     except (ValueError, TypeError):
         confidence = 0.0
+    if confidence > 1.0:  # modelo respondeu em escala 0–100 (DB exige 0–1)
+        confidence = min(confidence / 100.0, 1.0)
     fact = str(data.get("clean_fact", "") or "").strip()
     return is_valid, reasoning, confidence, fact
 
