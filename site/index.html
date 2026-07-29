@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEM-Swarm — inteligência de enxame com memória epistêmica</title>
+<meta name="description" content="Arquitetura de enxame heterogêneo operada por Small Language Models, sem modelo centralizador. A coordenação acontece de forma estigmérgica, através de uma memória epistêmica compartilhada.">
+<link rel="canonical" href="https://sem-swarm.roilabs.com.br/">
+<meta property="og:title" content="SEM-Swarm — inteligência de enxame com memória epistêmica">
+<meta property="og:description" content="Seis modelos pequenos, nenhum orquestrador central. A coordenação emerge dos rastros que os agentes deixam na memória compartilhada.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#E4E7E6">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23E4E7E6'/><circle cx='16' cy='9' r='3' fill='%231F6F5C'/><circle cx='8' cy='22' r='3' fill='%231F6F5C'/><circle cx='24' cy='22' r='3' fill='%231F6F5C'/></svg>">
+<style>
+  :root{
+    --ground:#E4E7E6; --panel:#EDEFEE; --ink:#12171A; --muted:#69747A;
+    --rule:#C9CFCD; --signal:#1F6F5C; --pending:#A96A11; --raw:#8C949A;
+    --mono:ui-monospace,"Cascadia Mono","SF Mono","Roboto Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.6;
+  }
+  a{color:inherit}
+  :focus-visible{outline:2px solid var(--signal);outline-offset:3px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+  /* ── status strip: o site é o painel do próprio enxame ── */
+  .strip{
+    border-bottom:1px solid var(--ink);background:var(--ground);
+    position:sticky;top:0;z-index:10;
+  }
+  .strip .wrap{
+    display:flex;flex-wrap:wrap;gap:0 28px;align-items:baseline;
+    font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;padding-top:10px;padding-bottom:10px;
+  }
+  .strip b{font-weight:700;letter-spacing:.12em}
+  .strip span{color:var(--muted)}
+  .strip span i{font-style:normal;color:var(--ink)}
+  .live::before{
+    content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+    background:var(--signal);margin-right:7px;vertical-align:middle;
+    animation:pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* ── hero ── */
+  .hero{padding:88px 0 24px}
+  .eyebrow{
+    font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--signal);margin:0 0 22px;
+  }
+  h1{
+    font-family:var(--mono);font-weight:500;
+    font-size:clamp(2.6rem,8.2vw,6rem);line-height:.95;letter-spacing:-.045em;
+    margin:0 0 26px;max-width:14ch;
+  }
+  h1 em{font-style:normal;color:var(--signal)}
+  .lede{font-size:clamp(1.05rem,2.1vw,1.3rem);max-width:56ch;margin:0 0 14px;color:#2B3336}
+  .sub{max-width:56ch;color:var(--muted);margin:0}
+
+  /* ── memória epistêmica: a assinatura da página ── */
+  .board{
+    margin:56px 0 0;border:1px solid var(--ink);background:var(--panel);
+  }
+  .board-head{
+    display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:12px 18px;border-bottom:1px solid var(--ink);
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  }
+  .board-head em{font-style:normal;color:var(--muted)}
+  .rows{min-height:302px}
+  .row{
+    display:grid;grid-template-columns:88px 1fr 132px 74px;gap:16px;align-items:baseline;
+    padding:11px 18px;border-bottom:1px solid var(--rule);
+    font-family:var(--mono);font-size:12.5px;
+    animation:in .32s ease-out both;
+  }
+  @keyframes in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+  .row:last-child{border-bottom:0}
+  .agent{color:var(--muted);letter-spacing:.04em}
+  .claim{font-family:var(--sans);font-size:14px;line-height:1.35}
+  .state{letter-spacing:.1em;text-transform:uppercase;font-size:11px}
+  .state[data-s="raw"]{color:var(--raw)}
+  .state[data-s="pendente"]{color:var(--pending)}
+  .state[data-s="verificado"]{color:var(--signal)}
+  .corr{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  .corr b{color:var(--ink);font-weight:600}
+  .board-foot{
+    padding:11px 18px;border-top:1px solid var(--ink);
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+    display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  }
+
+  /* ── seções ── */
+  section{padding:76px 0 4px}
+  h2{
+    font-family:var(--mono);font-weight:500;font-size:clamp(1.5rem,3.4vw,2.1rem);
+    letter-spacing:-.02em;margin:0 0 8px;
+  }
+  .kicker{
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 14px;
+  }
+  .say{max-width:62ch;margin:0 0 34px}
+  .say strong{font-weight:600}
+
+  /* ── orçamento de RAM: barras que somam a máquina real ── */
+  .budget{border-top:1px solid var(--ink)}
+  .alloc{
+    display:grid;grid-template-columns:180px 1fr 120px;gap:20px;align-items:center;
+    padding:14px 0;border-bottom:1px solid var(--rule);
+  }
+  .alloc h3{margin:0;font-family:var(--mono);font-size:14px;font-weight:600;letter-spacing:-.01em}
+  .alloc p{margin:2px 0 0;font-size:13px;color:var(--muted);line-height:1.4}
+  .bar{height:20px;background:#D7DBDA;position:relative}
+  .bar i{display:block;height:100%;background:var(--signal);opacity:.85}
+  .alloc.free .bar i{background:repeating-linear-gradient(135deg,#B8BFBD 0 5px,#CBD1CF 5px 10px)}
+  .ram{font-family:var(--mono);font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+  .ram em{font-style:normal;display:block;font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+
+  /* ── argumento numérico dos dois estágios ── */
+  .stages{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--ink);border:1px solid var(--ink)}
+  .stage{background:var(--panel);padding:26px 22px}
+  .stage .n{
+    font-family:var(--mono);font-size:clamp(2.2rem,6vw,3.4rem);line-height:1;
+    letter-spacing:-.04em;display:block;margin-bottom:6px;
+  }
+  .stage.bad .n{color:var(--raw)}
+  .stage.good .n{color:var(--signal)}
+  .stage h3{margin:0 0 8px;font-size:15px;font-weight:600}
+  .stage p{margin:0;font-size:14px;color:var(--muted);line-height:1.5}
+  .flow{
+    font-family:var(--mono);font-size:13px;margin:26px 0 0;padding:16px 18px;
+    border:1px solid var(--rule);overflow-x:auto;white-space:nowrap;color:#2B3336;
+  }
+  .flow b{color:var(--signal);font-weight:600}
+
+  /* ── tabelas ── */
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:11px 12px 11px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+  th{
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;border-bottom-color:var(--ink);
+  }
+  td code{font-family:var(--mono);font-size:13px}
+  .verb{
+    font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    padding:1px 6px;border:1px solid var(--rule);
+  }
+
+  /* ── sprints: aqui a numeração é informação, é uma sequência real ── */
+  ol.sprints{list-style:none;margin:0;padding:0;border-top:1px solid var(--ink)}
+  ol.sprints li{
+    display:grid;grid-template-columns:78px 1fr;gap:20px;
+    padding:16px 0;border-bottom:1px solid var(--rule);
+  }
+  ol.sprints .id{font-family:var(--mono);font-size:12px;color:var(--signal);letter-spacing:.06em;padding-top:2px}
+  ol.sprints h3{margin:0 0 4px;font-size:15px;font-weight:600}
+  ol.sprints p{margin:0;font-size:14px;color:var(--muted);line-height:1.5}
+
+  /* ── começar ── */
+  pre{
+    font-family:var(--mono);font-size:13px;line-height:1.75;margin:0;
+    padding:20px;border:1px solid var(--ink);background:var(--panel);
+    overflow-x:auto;
+  }
+  .c{color:var(--muted)}
+  .cta{
+    display:inline-block;margin-top:28px;font-family:var(--mono);font-size:13px;
+    letter-spacing:.06em;text-transform:uppercase;text-decoration:none;
+    border:1px solid var(--ink);padding:13px 22px;background:var(--ink);color:var(--ground);
+  }
+  .cta:hover{background:var(--signal);border-color:var(--signal)}
+
+  footer{margin-top:84px;border-top:1px solid var(--ink);padding:22px 0 60px}
+  footer .wrap{
+    display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;color:var(--muted);
+  }
+  footer a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--rule)}
+  footer a:hover{border-bottom-color:var(--signal);color:var(--signal)}
+
+  @media (max-width:820px){
+    .row{grid-template-columns:1fr 74px;row-gap:4px}
+    .row .agent{grid-column:1/-1}
+    .row .claim{grid-column:1/2}
+    .row .state{grid-column:1/2}
+    .row .corr{grid-column:2/3;grid-row:2/4}
+    .alloc{grid-template-columns:1fr;gap:8px}
+    .ram{text-align:left}
+    .stages{grid-template-columns:1fr}
+    ol.sprints li{grid-template-columns:1fr;gap:4px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+
+<div class="strip">
+  <div class="wrap">
+    <b>SEM-Swarm</b>
+    <span class="live"><i>enxame ativo</i></span>
+    <span>modelos <i>6</i></span>
+    <span>orquestrador central <i>nenhum</i></span>
+    <span>sprint <i>3 / 3</i></span>
+    <span>ROI&nbsp;Labs · pesquisa</span>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Self-distilling swarm intelligence with epistemic memory</p>
+    <h1>Um enxame <em>sem centro</em>.</h1>
+    <p class="lede">
+      Seis modelos pequenos dividem um trabalho que normalmente se dá a um modelo grande.
+      Nenhum deles coordena os outros.
+    </p>
+    <p class="sub">
+      A coordenação é estigmérgica: cada agente lê e escreve numa memória epistêmica
+      compartilhada, e o rastro que ele deixa lá é o que orienta o próximo. É o mesmo
+      mecanismo de um formigueiro — o comportamento coletivo mora no ambiente, não num chefe.
+    </p>
+
+    <div class="board" id="board">
+      <div class="board-head">
+        <span>Memória epistêmica · ao vivo</span>
+        <em id="clock">substrate api · postgres + pgvector</em>
+      </div>
+      <div class="rows" id="rows"></div>
+      <div class="board-foot">
+        <span>Uma observação vira fato quando outro agente a corrobora.</span>
+        <span id="tally">fatos verificados: 0</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Princípio arquitetural</p>
+    <h2>Privilégio cognitivo mínimo</h2>
+    <p class="say">
+      Cada modelo recebe <strong>exatamente</strong> a capacidade que sua tarefa exige — nem mais,
+      nem menos. Um 1.5B faz autocomplete na IDE porque autocomplete precisa de velocidade, não de
+      raciocínio. O orçamento abaixo é o de uma máquina real: um notebook de 24 GB, com o enxame
+      local inteiro rodando e sobrando espaço para trabalhar.
+    </p>
+
+    <div class="budget">
+      <div class="alloc">
+        <div>
+          <h3>qwen2.5-coder:1.5b</h3>
+          <p>FIM / autocomplete na IDE. Mais de 100 tok/s. Não orquestra nada.</p>
+        </div>
+        <div class="bar"><i style="width:6.25%"></i></div>
+        <div class="ram">1,5 GB<em>local</em></div>
+      </div>
+      <div class="alloc">
+        <div>
+          <h3>phi4-mini</h3>
+          <p>Orquestrador do Scout: tool calling, MCP, compreensão de contexto.</p>
+        </div>
+        <div class="bar"><i style="width:16.6%"></i></div>
+        <div class="ram">3–4 GB<em>local</em></div>
+      </div>
+      <div class="alloc">
+        <div>
+          <h3>nuextract</h3>
+          <p>Extração de JSON determinística, fiel ao schema. Treinado sinteticamente para isso.</p>
+        </div>
+        <div class="bar"><i style="width:12.5%"></i></div>
+        <div class="ram">2–3 GB<em>local</em></div>
+      </div>
+      <div class="alloc free">
+        <div>
+          <h3>livre</h3>
+          <p>Sistema, Docker, IDE, Node — a máquina continua sendo uma máquina de trabalho.</p>
+        </div>
+        <div class="bar"><i style="width:58%"></i></div>
+        <div class="ram">~14 GB<em>sobra</em></div>
+      </div>
+    </div>
+
+    <p class="say" style="margin-top:34px">
+      Fora do notebook, uma VPS 24/7 segura as duas cargas que não cabem em RAM de laptop:
+      <strong>qwen3-embedding 8B</strong> gera os vetores multilíngues da busca por similaridade, e
+      <strong>deepseek-r1:14b</strong> roda o <em>dreaming loop</em> — o raciocínio assíncrono que
+      relê a memória, julga contradições e reforça o que se sustenta.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Pipeline do Scout</p>
+    <h2>Dois estágios, porque um não dá conta</h2>
+    <p class="say">
+      Pedir raciocínio e JSON exato ao mesmo modelo pequeno é onde a maioria das arquiteturas
+      quebra. O Scout separa: um modelo pensa, outro estrutura.
+    </p>
+
+    <div class="stages">
+      <div class="stage bad">
+        <span class="n">28–33%</span>
+        <h3>Um modelo generalista &lt;10B fazendo extração JSON pura</h3>
+        <p>Acurácia estrutural. Dois terços das saídas chegam ao banco malformadas ou incompletas.</p>
+      </div>
+      <div class="stage good">
+        <span class="n">~100%</span>
+        <h3>NuExtract, treinado sinteticamente só para extrair</h3>
+        <p>Acurácia estrutural. E o Phi-4-Mini fica livre para fazer o que faz bem: raciocinar.</p>
+      </div>
+    </div>
+
+    <p class="flow">
+      texto bruto &nbsp;→&nbsp; <b>phi4-mini</b> <span class="c">(raciocínio)</span>
+      &nbsp;→&nbsp; <b>nuextract</b> <span class="c">(JSON determinístico)</span>
+      &nbsp;→&nbsp; <b>memory api</b> <span class="c">(observação pendente)</span>
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Substrate API</p>
+    <h2>A memória é a interface</h2>
+    <p class="say">
+      Agente nenhum chama outro agente. Todos falam com a memória — e é por isso que dá para
+      trocar, somar ou desligar um modelo sem reescrever o enxame.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Endpoint</th><th>Método</th><th>Quem usa, e para quê</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>/memory/observe</code></td><td><span class="verb">POST</span></td><td>O Scout deposita uma observação bruta.</td></tr>
+        <tr><td><code>/memory/pending</code></td><td><span class="verb">GET</span></td><td>O Filter busca o que ainda não foi julgado.</td></tr>
+        <tr><td><code>/memory/verify</code></td><td><span class="verb">POST</span></td><td>O Filter promove a observação a fato verificado.</td></tr>
+        <tr><td><code>/memory/search</code></td><td><span class="verb">POST</span></td><td>O Synthesizer faz busca vetorial por similaridade.</td></tr>
+        <tr><td><code>/swarm/state</code></td><td><span class="verb">GET</span></td><td>Estado de coordenação: quem está vivo, o que está em voo.</td></tr>
+        <tr><td><code>/health</code></td><td><span class="verb">GET</span></td><td>Health check.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">O que já está de pé</p>
+    <h2>Cinco sprints, em ordem</h2>
+    <p class="say">
+      Cada sprint depende do anterior — a numeração aqui é a dependência, não enfeite.
+    </p>
+    <ol class="sprints">
+      <li>
+        <span class="id">Sprint 0</span>
+        <div>
+          <h3>Bootstrap</h3>
+          <p>Scout, Memory API e banco de pé. O enxame passa a ter onde deixar rastro.</p>
+        </div>
+      </li>
+      <li>
+        <span class="id">Sprint 0.5</span>
+        <div>
+          <h3>Revisão arquitetural</h3>
+          <p>Leitura dos papers derrubou o desenho de um modelo só: entra o par Phi-4-Mini + NuExtract.</p>
+        </div>
+      </li>
+      <li>
+        <span class="id">Sprint 1</span>
+        <div>
+          <h3>Filter, Synthesizer e o dreaming loop</h3>
+          <p>Validado E2E na VPS, com embeddings reais do qwen3-embedding — 2048 dimensões via MRL.</p>
+        </div>
+      </li>
+      <li>
+        <span class="id">Sprint 2</span>
+        <div>
+          <h3>Auto-destilação e consenso</h3>
+          <p>Corroboração reforça o fato; o dreaming julga contradições. Mais corroborado vence, empate vai para o mais recente.</p>
+        </div>
+      </li>
+      <li>
+        <span class="id">Sprint 3</span>
+        <div>
+          <h3>Coordenação multi-agente e benchmarks</h3>
+          <p>Heartbeat de presença, filter daemon em <code>--loop</code>, e medição de latência e fidelidade numérica no pipeline.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Rodar</p>
+    <h2>Precisa de Ollama, Python 3.11 e Docker</h2>
+    <p class="say">
+      O enxame local sobe inteiro num notebook. A VPS é opcional — sem ela você perde o
+      dreaming loop e a busca vetorial, não o Scout.
+    </p>
+<pre><span class="c"># 1 · modelos locais</span>
+ollama pull phi4-mini
+ollama pull nuextract
+ollama pull qwen2.5-coder:1.5b
+
+<span class="c"># 2 · banco + Substrate API</span>
+docker compose up -d
+
+<span class="c"># 3 · uma observação entra na memória</span>
+python -m agents.scout --input "Texto para analisar"</pre>
+    <a class="cta" href="https://github.com/JeanZorzetti/sem-swarm">Ler o código no GitHub</a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>SEM-Swarm · projeto de pesquisa da <a href="https://roilabs.com.br">ROI Labs</a></span>
+    <span><a href="https://github.com/JeanZorzetti/sem-swarm">github.com/JeanZorzetti/sem-swarm</a></span>
+  </div>
+</footer>
+
+<script>
+// A assinatura da página: a memória epistêmica enchendo.
+// Roteiro fixo — é uma reconstituição fiel do pipeline, não dado ao vivo.
+(function () {
+  var rows = document.getElementById("rows");
+  var tally = document.getElementById("tally");
+  if (!rows) return;
+
+  var script = [
+    { agent: "scout·01",  claim: "Phi-4-Mini sustenta tool calling em contexto de 8k",           corr: 1 },
+    { agent: "scout·02",  claim: "NuExtract não perde campo quando o schema tem 12 chaves",      corr: 1 },
+    { agent: "filter",    claim: "Embedding qwen3 de 2048d cabe no índice sem perda de recall",  corr: 2 },
+    { agent: "scout·01",  claim: "qwen2.5-coder passa de 100 tok/s no notebook",                 corr: 3 },
+    { agent: "synth",     claim: "Duas observações sobre latência se contradizem",               corr: 1 },
+    { agent: "dreaming",  claim: "Contradição resolvida: vence a leitura mais corroborada",      corr: 2 },
+    { agent: "scout·03",  claim: "Heartbeat detecta agente ausente em menos de 30 s",            corr: 1 }
+  ];
+
+  var states = ["raw", "pendente", "verificado"];
+  var i = 0, verified = 0;
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function row(entry, settled) {
+    var el = document.createElement("div");
+    el.className = "row";
+    if (settled) el.style.animation = "none";
+    el.innerHTML =
+      '<span class="agent">' + entry.agent + '</span>' +
+      '<span class="claim"></span>' +
+      '<span class="state" data-s="raw">raw</span>' +
+      '<span class="corr">×<b>' + entry.corr + "</b></span>";
+    el.querySelector(".claim").textContent = entry.claim;
+    rows.insertBefore(el, rows.firstChild);
+    while (rows.children.length > 7) rows.removeChild(rows.lastChild);
+    return el.querySelector(".state");
+  }
+
+  function settle(state) {
+    state.dataset.s = "verificado";
+    state.textContent = "verificado";
+    verified++;
+    tally.textContent = "fatos verificados: " + verified;
+  }
+
+  // A memória não começa vazia — ela já tem história quando você chega.
+  for (; i < 5; i++) settle(row(script[i], true));
+
+  function tick() {
+    var state = row(script[i % script.length], false);
+    i++;
+    if (reduce) { settle(state); return; }
+    var step = 1;
+    var advance = setInterval(function () {
+      if (step >= states.length) return clearInterval(advance);
+      if (states[step] === "verificado") settle(state);
+      else { state.dataset.s = states[step]; state.textContent = states[step]; }
+      step++;
+    }, 900);
+  }
+
+  setTimeout(tick, reduce ? 0 : 1400);
+  setInterval(tick, reduce ? 8000 : 2600);
+})();
+</script>
+</body>
+</html>
