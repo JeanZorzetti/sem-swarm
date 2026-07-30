@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sem-swarm.nimblabs.com/sitemap.xml
